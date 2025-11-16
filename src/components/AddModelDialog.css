@@ -1,0 +1,196 @@
+/* Baseweight Canvas - Add Model Dialog Styles */
+
+.bw-dialog-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  z-index: 1001;
+  backdrop-filter: blur(4px);
+}
+
+.bw-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+  max-width: 600px;
+  background-color: #252525;
+  border: 1px solid #3e3e3e;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  z-index: 1002;
+  display: flex;
+  flex-direction: column;
+}
+
+.bw-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid #3e3e3e;
+}
+
+.bw-dialog-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin: 0;
+}
+
+.bw-dialog-close {
+  background: none;
+  border: none;
+  color: #a0a0a0;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.bw-dialog-close:hover {
+  background-color: #3e3e3e;
+  color: #e0e0e0;
+}
+
+.bw-dialog-content {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.bw-dialog-info {
+  background-color: rgba(0, 102, 255, 0.1);
+  border: 1px solid rgba(0, 102, 255, 0.3);
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.bw-dialog-info-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0066ff;
+  margin: 0 0 8px 0;
+}
+
+.bw-dialog-info-text {
+  font-size: 13px;
+  color: #e0e0e0;
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+}
+
+.bw-dialog-requirements {
+  margin: 0;
+  padding-left: 20px;
+  list-style: none;
+}
+
+.bw-dialog-requirements li {
+  font-size: 13px;
+  color: #e0e0e0;
+  margin-bottom: 8px;
+  position: relative;
+  line-height: 1.5;
+}
+
+.bw-dialog-requirements li::before {
+  content: "•";
+  color: #0066ff;
+  font-weight: bold;
+  position: absolute;
+  left: -15px;
+}
+
+.bw-dialog-requirements li:last-child {
+  margin-bottom: 0;
+}
+
+.bw-dialog-requirements strong {
+  color: #0066ff;
+  font-weight: 600;
+}
+
+.bw-dialog-hint {
+  display: block;
+  font-size: 12px;
+  color: #a0a0a0;
+  font-family: 'Monaco', 'Menlo', monospace;
+  margin-top: 2px;
+}
+
+.bw-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bw-dialog-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.bw-dialog-input,
+.bw-dialog-select {
+  width: 100%;
+  padding: 10px 12px;
+  background-color: #1e1e1e;
+  border: 1px solid #3e3e3e;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.bw-dialog-input:hover,
+.bw-dialog-select:hover {
+  border-color: #505050;
+}
+
+.bw-dialog-input:focus,
+.bw-dialog-select:focus {
+  outline: none;
+  border-color: #0066ff;
+}
+
+.bw-dialog-input::placeholder {
+  color: #606060;
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.bw-dialog-select {
+  cursor: pointer;
+}
+
+.bw-dialog-select option {
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+}
+
+.bw-dialog-field-hint {
+  font-size: 12px;
+  color: #a0a0a0;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.bw-dialog-error {
+  font-size: 12px;
+  color: #ff4444;
+  margin: 0;
+  font-weight: 500;
+}
+
+.bw-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 8px;
+}

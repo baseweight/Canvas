@@ -1,0 +1,72 @@
+/* Baseweight Canvas - Global Styles */
+
+/* Import Spectrum CSS design tokens and base styles */
+@import '@spectrum-css/tokens/dist/index.css';
+@import '@spectrum-css/typography/dist/index.css';
+
+:root {
+  /* Baseweight brand colors */
+  --bw-primary: #0066ff;
+  --bw-primary-hover: #0052cc;
+  --bw-accent: #00d4ff;
+
+  /* Layout */
+  --bw-sidebar-width: 240px;
+  --bw-toolbar-height: 48px;
+
+  /* Dark theme colors */
+  --bw-bg-dark: #1e1e1e;
+  --bw-bg-darker: #252525;
+  --bw-bg-darkest: #2d2d2d;
+  --bw-border: #3e3e3e;
+  --bw-text-primary: #e0e0e0;
+  --bw-text-secondary: #a0a0a0;
+  --bw-text-tertiary: #808080;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: adobe-clean, 'Source Sans Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--bw-bg-dark);
+  color: var(--bw-text-primary);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Smooth scrolling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #505050 #2d2d2d;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #2d2d2d;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #505050;
+  border-radius: 5px;
+  border: 2px solid #2d2d2d;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #606060;
+}

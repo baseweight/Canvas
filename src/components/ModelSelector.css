@@ -1,0 +1,148 @@
+/* Baseweight Canvas - Model Selector Styles */
+
+.bw-model-selector {
+  position: relative;
+}
+
+.bw-model-selector-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background-color: var(--spectrum-global-color-gray-75);
+  border: 1px solid var(--spectrum-global-color-gray-400);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--spectrum-global-color-gray-800);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 200px;
+}
+
+.bw-model-selector-button:hover {
+  background-color: var(--spectrum-global-color-gray-50);
+  border-color: var(--bw-primary);
+}
+
+.bw-model-selector-label {
+  flex: 1;
+  text-align: left;
+}
+
+.bw-model-selector-icon {
+  width: 20px;
+  height: 20px;
+  fill: var(--spectrum-global-color-gray-600);
+  transition: transform 0.2s ease;
+}
+
+.bw-model-selector-icon--open {
+  transform: rotate(180deg);
+}
+
+.bw-model-selector-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 99;
+}
+
+.bw-model-selector-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background-color: var(--spectrum-global-color-gray-50);
+  border: 1px solid var(--spectrum-global-color-gray-400);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.bw-model-selector-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--spectrum-global-color-gray-600);
+  font-size: 13px;
+}
+
+.bw-model-selector-option {
+  width: 100%;
+  padding: 12px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  border-bottom: 1px solid var(--spectrum-global-color-gray-200);
+}
+
+.bw-model-selector-option:last-child {
+  border-bottom: none;
+}
+
+.bw-model-selector-option:hover:not(.bw-model-selector-option--disabled) {
+  background-color: var(--spectrum-global-color-gray-100);
+}
+
+.bw-model-selector-option--selected {
+  background-color: var(--spectrum-blue-100);
+}
+
+.bw-model-selector-option--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bw-model-selector-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bw-model-selector-option-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--spectrum-global-color-gray-800);
+}
+
+.bw-model-selector-option-meta {
+  font-size: 12px;
+  color: var(--spectrum-global-color-gray-600);
+}
+
+/* Dark mode */
+body.spectrum--dark .bw-model-selector-button {
+  background-color: var(--spectrum-global-color-gray-100);
+  border-color: var(--spectrum-global-color-gray-400);
+  color: var(--spectrum-global-color-gray-50);
+}
+
+body.spectrum--dark .bw-model-selector-button:hover {
+  background-color: var(--spectrum-global-color-gray-75);
+}
+
+body.spectrum--dark .bw-model-selector-dropdown {
+  background-color: var(--spectrum-global-color-gray-100);
+  border-color: var(--spectrum-global-color-gray-400);
+}
+
+body.spectrum--dark .bw-model-selector-option:hover:not(.bw-model-selector-option--disabled) {
+  background-color: var(--spectrum-global-color-gray-75);
+}
+
+body.spectrum--dark .bw-model-selector-option--selected {
+  background-color: var(--spectrum-blue-900);
+}
+
+body.spectrum--dark .bw-model-selector-option-name {
+  color: var(--spectrum-global-color-gray-50);
+}
+
+body.spectrum--dark .bw-model-selector-option-meta {
+  color: var(--spectrum-global-color-gray-400);
+}
