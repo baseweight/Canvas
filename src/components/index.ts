@@ -6,3 +6,4 @@ export { ChatPanel } from './ChatPanel';
 export { ModelSelectionModal } from './ModelSelectionModal';
 export { AddModelDialog } from './AddModelDialog';
 export { ModelSelector } from './ModelSelector';
+export { DownloadModelDialog } from './DownloadModelDialog';

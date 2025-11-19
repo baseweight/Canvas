@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Layout } from "./components/Layout";
 import { ImageViewer } from "./components/ImageViewer";
 import { ChatPanel } from "./components/ChatPanel";
 import { ModelSelectionModal } from "./components/ModelSelectionModal";
+import { DownloadModelDialog } from "./components/DownloadModelDialog";
 import type { MediaItem, Model, AvailableModel, ChatMessage } from "./types";
 import "./App.css";
 
@@ -147,11 +150,82 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
 
 ];
 
+interface DownloadProgress {
+  current: number;
+  total: number;
+  percentage: number;
+  file: string;
+}
+
 function App() {
   const [currentMedia, setCurrentMedia] = useState<MediaItem | undefined>(undefined);
-  const [currentModel, setCurrentModel] = useState<Model | undefined>(BUNDLED_MODEL); // SmolVLM2 ships with the app
+  const [currentModel, setCurrentModel] = useState<Model | undefined>(undefined);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
+  const [isDownloadDialogOpen, setIsDownloadDialogOpen] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | undefined>(undefined);
+  const [isModelLoading, setIsModelLoading] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Check if bundled model is downloaded on startup
+  useEffect(() => {
+    const checkBundledModel = async () => {
+      try {
+        const isDownloaded = await invoke<boolean>('is_bundled_model_downloaded');
+
+        if (isDownloaded) {
+          // Model is downloaded, set it as current
+          const updatedModel = { ...BUNDLED_MODEL, downloaded: true };
+          setCurrentModel(updatedModel);
+        } else {
+          // Model not downloaded, show download dialog
+          setIsDownloadDialogOpen(true);
+        }
+      } catch (error) {
+        console.error('Failed to check bundled model:', error);
+      }
+    };
+
+    checkBundledModel();
+
+    // Listen for download progress events
+    const unlisten = listen<DownloadProgress>('download-progress', (event) => {
+      setDownloadProgress(event.payload);
+    });
+
+    return () => {
+      unlisten.then(fn => fn());
+    };
+  }, []);
+
+  // Load model when currentModel changes
+  useEffect(() => {
+    const loadModel = async () => {
+      if (!currentModel || !currentModel.downloaded) {
+        return;
+      }
+
+      try {
+        setIsModelLoading(true);
+        console.log('Loading model:', currentModel.id);
+
+        await invoke('load_model', {
+          modelId: currentModel.id,
+          nGpuLayers: 999, // Use all available GPU layers
+        });
+
+        console.log('Model loaded successfully');
+        setIsModelLoading(false);
+      } catch (error) {
+        console.error('Failed to load model:', error);
+        alert(`Failed to load model: ${error}`);
+        setIsModelLoading(false);
+      }
+    };
+
+    loadModel();
+  }, [currentModel]);
 
   const handleMediaDrop = (files: File[]) => {
     if (files.length === 0) return;
@@ -184,27 +258,84 @@ function App() {
     img.src = url;
   };
 
-  const handleSendMessage = (content: string) => {
+  const handleSendMessage = async (content: string) => {
+    if (!currentMedia || !currentModel) {
+      return;
+    }
+
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
       content,
       timestamp: new Date(),
-      mediaId: currentMedia?.id,
+      mediaId: currentMedia.id,
     };
 
     setMessages(prev => [...prev, userMessage]);
+    setIsGenerating(true);
 
-    // Simulate assistant response (replace with actual inference later)
-    setTimeout(() => {
+    try {
+      // Load image and convert to RGB bytes
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = currentMedia.url;
+      });
+
+      // Create canvas and get RGB data
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        throw new Error('Failed to get canvas context');
+      }
+
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, img.width, img.height);
+
+      // Convert RGBA to RGB
+      const rgbData: number[] = [];
+      for (let i = 0; i < imageData.data.length; i += 4) {
+        rgbData.push(imageData.data[i]);     // R
+        rgbData.push(imageData.data[i + 1]); // G
+        rgbData.push(imageData.data[i + 2]); // B
+      }
+
+      console.log('Calling inference with image:', img.width, 'x', img.height);
+
+      // Call inference
+      const response = await invoke<string>('generate_response', {
+        prompt: content,
+        imageData: rgbData,
+        imageWidth: img.width,
+        imageHeight: img.height,
+      });
+
       const assistantMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: 'This is a mock response. The llama.cpp inference backend will be integrated next.',
+        content: response,
         timestamp: new Date(),
       };
+
       setMessages(prev => [...prev, assistantMessage]);
-    }, 1000);
+      setIsGenerating(false);
+    } catch (error) {
+      console.error('Failed to generate response:', error);
+      const errorMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `Error: ${error}`,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+      setIsGenerating(false);
+    }
   };
 
   const handleSelectModel = (modelId: string) => {
@@ -237,6 +368,30 @@ function App() {
     );
   };
 
+  const handleDownloadBundledModel = async () => {
+    try {
+      setIsDownloading(true);
+      setDownloadProgress(undefined);
+
+      await invoke('download_bundled_model');
+
+      // Download complete, update model state
+      const updatedModel = { ...BUNDLED_MODEL, downloaded: true };
+      setCurrentModel(updatedModel);
+      setIsDownloadDialogOpen(false);
+      setIsDownloading(false);
+    } catch (error) {
+      console.error('Failed to download bundled model:', error);
+      alert(`Failed to download model: ${error}`);
+      setIsDownloading(false);
+    }
+  };
+
+  const handleCancelDownload = () => {
+    // User canceled download, close dialog and leave currentModel as undefined
+    setIsDownloadDialogOpen(false);
+  };
+
   return (
     <Layout>
       <ImageViewer
@@ -258,6 +413,13 @@ function App() {
         onSelectModel={handleSelectModel}
         onDownloadModel={handleDownloadModel}
         onAddModel={handleAddModel}
+      />
+      <DownloadModelDialog
+        isOpen={isDownloadDialogOpen}
+        onDownload={handleDownloadBundledModel}
+        onCancel={handleCancelDownload}
+        progress={downloadProgress}
+        isDownloading={isDownloading}
       />
     </Layout>
   );

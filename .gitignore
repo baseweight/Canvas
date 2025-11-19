@@ -18,6 +18,12 @@ src-tauri/target
 src-tauri/WixTools
 src-tauri/gen
 
+# llama.cpp libraries (too large for git, users build locally or download from releases)
+src-tauri/libs/**/*.so
+src-tauri/libs/**/*.so.*
+src-tauri/libs/**/*.dylib
+src-tauri/libs/**/*.dll
+
 # OS
 .DS_Store
 Thumbs.db
