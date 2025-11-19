@@ -165,8 +165,8 @@ function App() {
   const [isDownloadDialogOpen, setIsDownloadDialogOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | undefined>(undefined);
-  const [isModelLoading, setIsModelLoading] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [_isModelLoading, setIsModelLoading] = useState(false);
+  const [_isGenerating, setIsGenerating] = useState(false);
 
   // Check if bundled model is downloaded on startup
   useEffect(() => {
