@@ -13,10 +13,18 @@ fn main() {
             "linux-x64"
         }
     } else if cfg!(target_os = "windows") {
-        "windows-x64"
+        // Check LLAMA_BACKEND env var: "cuda" (default) or "vulkan"
+        let backend = std::env::var("LLAMA_BACKEND").unwrap_or_else(|_| "cuda".to_string());
+        match backend.to_lowercase().as_str() {
+            "vulkan" => "windows-x64-vulkan",
+            "cuda" | _ => "windows-x64-cuda",
+        }
     } else {
         panic!("Unsupported target OS")
     };
+
+    // Re-run build script if LLAMA_BACKEND changes
+    println!("cargo:rerun-if-env-changed=LLAMA_BACKEND");
 
     // Tell cargo to look for shared libraries in the libs directory
     let lib_dir = std::env::current_dir()
