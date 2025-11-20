@@ -1,4 +1,6 @@
 use tauri::{Manager, Emitter, State};
+use tauri::menu::{Menu, MenuItem, Submenu};
+use tauri_plugin_dialog::DialogExt;
 use std::time::Duration;
 
 mod llama_inference;
@@ -142,6 +144,7 @@ async fn generate_response(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(create_shared_engine())
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -153,8 +156,16 @@ pub fn run() {
             generate_response
         ])
         .setup(|app| {
+            // Create menu for main window only
+            let open_item = MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?;
+            let file_menu = Submenu::with_items(app, "File", true, &[&open_item])?;
+            let menu = Menu::with_items(app, &[&file_menu])?;
+
             let splash_window = app.get_webview_window("splash").unwrap();
             let main_window = app.get_webview_window("main").unwrap();
+
+            // Set menu only on main window
+            main_window.set_menu(menu)?;
 
             // Clone the windows for the async block
             let splash = splash_window.clone();
@@ -172,6 +183,25 @@ pub fn run() {
             });
 
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            println!("Menu event received: {:?}", event.id());
+            if event.id() == "open" {
+                println!("Open menu clicked");
+                let app_handle = app.clone();
+                app.dialog()
+                    .file()
+                    .add_filter("Images", &["png", "jpg", "jpeg", "gif", "bmp", "webp"])
+                    .pick_file(move |file_path| {
+                        println!("File picker callback - file_path: {:?}", file_path);
+                        if let Some(path) = file_path {
+                            let path_str = path.to_string();
+                            println!("Emitting file-opened event with path: {}", path_str);
+                            let result = app_handle.emit("file-opened", path_str);
+                            println!("Emit result: {:?}", result);
+                        }
+                    });
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

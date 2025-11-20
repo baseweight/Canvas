@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Layout } from "./components/Layout";
 import { ImageViewer } from "./components/ImageViewer";
@@ -192,6 +192,53 @@ function App() {
     // Listen for download progress events
     const unlisten = listen<DownloadProgress>('download-progress', (event) => {
       setDownloadProgress(event.payload);
+    });
+
+    return () => {
+      unlisten.then(fn => fn());
+    };
+  }, []);
+
+  // Listen for file-opened events from the File menu
+  useEffect(() => {
+    console.log('Setting up file-opened event listener');
+    const unlisten = listen<string>('file-opened', (event) => {
+      console.log('file-opened event received:', event);
+      const filePath = event.payload;
+      console.log('File path:', filePath);
+      const url = convertFileSrc(filePath);
+      console.log('Converted URL:', url);
+      const filename = filePath.split('/').pop() || filePath.split('\\').pop() || 'image';
+      console.log('Filename:', filename);
+
+      // Create image element to get dimensions
+      const img = new Image();
+
+      img.onload = () => {
+        const mediaItem: MediaItem = {
+          id: crypto.randomUUID(),
+          type: 'image',
+          url,
+          filename,
+          size: 0, // Size not available from file path
+          dimensions: {
+            width: img.width,
+            height: img.height,
+          },
+          createdAt: new Date(),
+        };
+
+        setCurrentMedia(mediaItem);
+        // Clear messages when new image is loaded
+        setMessages([]);
+      };
+
+      img.onerror = () => {
+        console.error('Failed to load image from:', filePath);
+        alert(`Failed to load image: ${filename}`);
+      };
+
+      img.src = url;
     });
 
     return () => {
