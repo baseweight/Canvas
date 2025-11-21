@@ -36,7 +36,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {
@@ -48,6 +52,13 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "frameworks": [
+        "libs/darwin-arm64/libllama.0.dylib",
+        "libs/darwin-arm64/libmtmd.0.dylib",
+        "libs/darwin-arm64/libggml.0.dylib"
+      ]
+    }
   }
 }
