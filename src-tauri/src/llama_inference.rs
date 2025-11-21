@@ -121,8 +121,8 @@ extern "C" {
         output: *mut MtmdInputChunks,
         text: *const MtmdInputText,
         bitmaps: *const *mut MtmdBitmap,
-        n_bitmaps: c_int,
-    ) -> c_int;
+        n_bitmaps: usize,  // size_t in C
+    ) -> i32;
 
     fn mtmd_default_marker() -> *const c_char;
 }

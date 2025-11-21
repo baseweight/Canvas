@@ -23,6 +23,7 @@ src-tauri/libs/**/*.so
 src-tauri/libs/**/*.so.*
 src-tauri/libs/**/*.dylib
 src-tauri/libs/**/*.dll
+src-tauri/libs/**/*.lib
 
 # OS
 .DS_Store
