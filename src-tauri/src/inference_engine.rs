@@ -265,8 +265,8 @@ extern "C" {
         output: *mut MtmdInputChunks,
         text: *const MtmdInputText,
         bitmaps: *const *mut MtmdBitmap,
-        n_bitmaps: c_int,
-    ) -> c_int;
+        n_bitmaps: usize,  // size_t in C
+    ) -> i32;
 
     fn mtmd_default_marker() -> *const c_char;
 
@@ -477,8 +477,6 @@ impl InferenceEngine {
                     mtmd_input_chunks_free(chunks);
                     return Err(anyhow!("Failed to tokenize input"));
                 }
-
-                println!("Tokenization successful");
 
                 // Evaluate all chunks including image
                 let mut temp_n_past: LlamaPos = 0;
@@ -711,4 +709,32 @@ pub type SharedInferenceEngine = Arc<Mutex<Option<InferenceEngine>>>;
 
 pub fn create_shared_engine() -> SharedInferenceEngine {
     Arc::new(Mutex::new(None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn print_struct_sizes() {
+        println!("\n=== FFI Struct Size Debug (Cross-Platform) ===");
+        println!("sizeof(MtmdContextParams) = {}", std::mem::size_of::<MtmdContextParams>());
+        println!("sizeof(MtmdInputText) = {}", std::mem::size_of::<MtmdInputText>());
+        println!("sizeof(LlamaModelParams) = {}", std::mem::size_of::<LlamaModelParams>());
+        println!("sizeof(LlamaContextParams) = {}", std::mem::size_of::<LlamaContextParams>());
+        println!("sizeof(LlamaBatch) = {}", std::mem::size_of::<LlamaBatch>());
+        println!("sizeof(bool) = {}", std::mem::size_of::<bool>());
+        println!("sizeof(c_int) = {}", std::mem::size_of::<c_int>());
+        println!("sizeof(*const c_char) = {}", std::mem::size_of::<*const c_char>());
+        println!("==============================================\n");
+
+        // Expected sizes based on C struct layout (64-bit):
+        // MtmdContextParams: 2 bools + padding(2) + int(4) + 2 pointers(16) + 3 ints(12) = 36, aligned to 8 = 40
+        // MtmdInputText: pointer(8) + 2 bools(2) + padding(6) = 16
+
+        // These assertions help catch alignment issues across platforms
+        assert!(std::mem::size_of::<*const c_char>() == 8, "Expected 64-bit pointers");
+        assert!(std::mem::size_of::<c_int>() == 4, "Expected 32-bit int");
+        assert!(std::mem::size_of::<bool>() == 1, "Expected 1-byte bool");
+    }
 }
