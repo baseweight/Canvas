@@ -3,8 +3,15 @@
 .bw-image-viewer {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   background-color: #1e1e1e;
+  overflow: hidden;
+}
+
+.bw-image-viewer-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 

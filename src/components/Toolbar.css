@@ -1,0 +1,63 @@
+/* Baseweight Canvas - Toolbar Styles */
+
+.bw-toolbar {
+  display: flex;
+  flex-direction: column;
+  background-color: #2d2d2d;
+  border-right: 1px solid #3e3e3e;
+  padding: 8px 6px;
+  min-width: 48px;
+  gap: 4px;
+}
+
+.bw-toolbar-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bw-tool-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background-color: #3a3a3a;
+  border: 1px solid #4a4a4a;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: #e0e0e0;
+  width: 36px;
+  height: 36px;
+}
+
+.bw-tool-button:hover:not(.bw-tool-button--disabled) {
+  background-color: #454545;
+  border-color: #5a5a5a;
+}
+
+.bw-tool-button:active:not(.bw-tool-button--disabled) {
+  background-color: #505050;
+  transform: scale(0.98);
+}
+
+.bw-tool-button--active {
+  background-color: #0078d4;
+  border-color: #1084d8;
+}
+
+.bw-tool-button--active:hover {
+  background-color: #1084d8;
+  border-color: #2090dc;
+}
+
+.bw-tool-button--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.bw-tool-icon {
+  font-size: 20px;
+  line-height: 1;
+  user-select: none;
+}

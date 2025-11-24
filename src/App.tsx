@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Layout } from "./components/Layout";
 import { ImageViewer } from "./components/ImageViewer";
 import { ChatPanel } from "./components/ChatPanel";
@@ -305,6 +306,59 @@ function App() {
     img.src = url;
   };
 
+  const handleLoadImage = async () => {
+    try {
+      const filePath = await open({
+        multiple: false,
+        directory: false,
+        filters: [
+          {
+            name: 'Images',
+            extensions: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
+          },
+        ],
+      });
+
+      if (!filePath) {
+        return; // User cancelled
+      }
+
+      const url = convertFileSrc(filePath);
+      const filename = filePath.split('/').pop() || filePath.split('\\').pop() || 'image';
+
+      // Create image element to get dimensions
+      const img = new Image();
+
+      img.onload = () => {
+        const mediaItem: MediaItem = {
+          id: crypto.randomUUID(),
+          type: 'image',
+          url,
+          filename,
+          size: 0,
+          dimensions: {
+            width: img.width,
+            height: img.height,
+          },
+          createdAt: new Date(),
+        };
+
+        setCurrentMedia(mediaItem);
+        // Clear messages when new image is loaded
+        setMessages([]);
+      };
+
+      img.onerror = () => {
+        console.error('Failed to load image from:', filePath);
+        alert(`Failed to load image: ${filename}`);
+      };
+
+      img.src = url;
+    } catch (error) {
+      console.error('Failed to open file dialog:', error);
+    }
+  };
+
   const handleSendMessage = async (content: string) => {
     if (!currentMedia || !currentModel) {
       return;
@@ -444,6 +498,7 @@ function App() {
       <ImageViewer
         mediaItem={currentMedia}
         onMediaDrop={handleMediaDrop}
+        onLoadImage={handleLoadImage}
       />
       <ChatPanel
         currentModel={currentModel}
