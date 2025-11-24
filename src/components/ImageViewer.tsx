@@ -1,7 +1,9 @@
 import React from 'react';
 import type { MediaItem } from '../types';
+import type { NormalizedSelection } from '../types/selection';
 import { DropZone } from './DropZone';
 import { Toolbar, type ToolType } from './Toolbar';
+import { SelectionOverlay } from './SelectionOverlay';
 import './ImageViewer.css';
 
 interface ImageViewerProps {
@@ -12,6 +14,8 @@ interface ImageViewerProps {
 
 export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop, onLoadImage }) => {
   const [activeTool, setActiveTool] = React.useState<ToolType | undefined>(undefined);
+  const [selection, setSelection] = React.useState<NormalizedSelection | null>(null);
+  const imageRef = React.useRef<HTMLImageElement>(null);
 
   const handleToolSelect = (tool: ToolType) => {
     setActiveTool(tool);
@@ -21,6 +25,11 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop
       onLoadImage();
     }
     // Other tools will be implemented later
+  };
+
+  const handleSelectionChange = (newSelection: NormalizedSelection | null) => {
+    setSelection(newSelection);
+    // TODO: Use selection for crop operation
   };
 
   if (!mediaItem) {
@@ -37,11 +46,19 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop
       <div className="bw-image-viewer-content">
         <div className="bw-image-container">
           {mediaItem.type === 'image' ? (
-            <img
-              src={mediaItem.url}
-              alt={mediaItem.filename}
-              className="bw-image"
-            />
+            <div className="bw-image-wrapper">
+              <img
+                ref={imageRef}
+                src={mediaItem.url}
+                alt={mediaItem.filename}
+                className="bw-image"
+              />
+              <SelectionOverlay
+                imageElement={imageRef.current}
+                isActive={activeTool === 'select'}
+                onSelectionChange={handleSelectionChange}
+              />
+            </div>
           ) : (
             <video
               src={mediaItem.url}

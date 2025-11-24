@@ -30,6 +30,12 @@
   overflow: auto;
 }
 
+.bw-image-wrapper {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
 .bw-image {
   max-width: 100%;
   max-height: 100%;

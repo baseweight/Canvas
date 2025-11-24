@@ -33,7 +33,7 @@ const ToolButton: React.FC<ToolButtonProps> = ({ label, icon, active, disabled, 
 export const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onToolSelect }) => {
   const tools: Array<{ tool: ToolType; label: string; icon: string; disabled?: boolean }> = [
     { tool: 'load', label: 'Load', icon: '📁' },
-    { tool: 'select', label: 'Select', icon: '⬚', disabled: true },
+    { tool: 'select', label: 'Select', icon: '⬚' },
     { tool: 'crop', label: 'Crop', icon: '✂', disabled: true },
     { tool: 'brush', label: 'Brush', icon: '🖌', disabled: true },
   ];
