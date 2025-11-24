@@ -322,6 +322,22 @@ function App() {
     img.src = url;
   };
 
+  const handleImageCrop = (croppedImageUrl: string) => {
+    // Create a new image to get dimensions
+    const img = new Image();
+    img.onload = () => {
+      setCurrentMedia(prev => prev ? {
+        ...prev,
+        url: croppedImageUrl,
+        dimensions: {
+          width: img.width,
+          height: img.height,
+        },
+      } : prev);
+    };
+    img.src = croppedImageUrl;
+  };
+
   const handleLoadImage = async () => {
     try {
       // If there's already an image loaded, confirm before resetting session
@@ -530,6 +546,7 @@ function App() {
         mediaItem={currentMedia}
         onMediaDrop={handleMediaDrop}
         onLoadImage={handleLoadImage}
+        onImageCrop={handleImageCrop}
       />
       <ChatPanel
         currentModel={currentModel}
