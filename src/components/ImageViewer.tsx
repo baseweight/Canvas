@@ -4,6 +4,7 @@ import type { NormalizedSelection } from '../types/selection';
 import { DropZone } from './DropZone';
 import { Toolbar, type ToolType } from './Toolbar';
 import { SelectionOverlay } from './SelectionOverlay';
+import { DrawingOverlay, type DrawingOverlayRef } from './DrawingOverlay';
 import './ImageViewer.css';
 
 interface ImageViewerProps {
@@ -13,13 +14,33 @@ interface ImageViewerProps {
   onImageCrop?: (croppedImageUrl: string) => void;
 }
 
-export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop, onLoadImage, onImageCrop }) => {
+export interface ImageViewerRef {
+  applyPendingEdits: () => void;
+}
+
+export const ImageViewer = React.forwardRef<ImageViewerRef, ImageViewerProps>(({ mediaItem, onMediaDrop, onLoadImage, onImageCrop }, ref) => {
   const [activeTool, setActiveTool] = React.useState<ToolType | undefined>(undefined);
   const [selection, setSelection] = React.useState<NormalizedSelection | null>(null);
   const imageRef = React.useRef<HTMLImageElement>(null);
+  const drawingOverlayRef = React.useRef<DrawingOverlayRef>(null);
+
+  // Expose method to apply pending edits
+  React.useImperativeHandle(ref, () => ({
+    applyPendingEdits: () => {
+      if (activeTool === 'brush' && drawingOverlayRef.current?.hasDrawing()) {
+        drawingOverlayRef.current?.applyDrawing();
+      }
+    },
+  }));
 
   const handleToolSelect = (tool: ToolType) => {
     console.log('Tool selected:', tool, { hasSelection: !!selection, hasImageRef: !!imageRef.current });
+
+    // If switching away from brush tool, apply any drawings
+    if (activeTool === 'brush' && tool !== 'brush' && drawingOverlayRef.current?.hasDrawing()) {
+      drawingOverlayRef.current?.applyDrawing();
+    }
+
     setActiveTool(tool);
 
     // Handle tool actions
@@ -88,6 +109,43 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop
     setSelection(newSelection);
   };
 
+  const handleApplyDrawing = (drawingCanvas: HTMLCanvasElement) => {
+    if (!imageRef.current || !onImageCrop) {
+      return;
+    }
+
+    const img = imageRef.current;
+
+    // Create a new canvas to composite the image and drawing
+    const compositeCanvas = document.createElement('canvas');
+    compositeCanvas.width = img.naturalWidth;
+    compositeCanvas.height = img.naturalHeight;
+    const ctx = compositeCanvas.getContext('2d');
+
+    if (!ctx) {
+      console.error('Failed to get canvas context');
+      return;
+    }
+
+    // Draw the original image
+    ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
+
+    // Draw the drawing overlay on top, scaled to match natural size
+    ctx.drawImage(
+      drawingCanvas,
+      0, 0, drawingCanvas.width, drawingCanvas.height,
+      0, 0, img.naturalWidth, img.naturalHeight
+    );
+
+    // Convert to blob and create URL
+    compositeCanvas.toBlob((blob) => {
+      if (blob) {
+        const compositeUrl = URL.createObjectURL(blob);
+        onImageCrop(compositeUrl); // Reuse the same callback as crop
+      }
+    }, 'image/png');
+  };
+
   if (!mediaItem) {
     return (
       <div className="bw-image-viewer bw-image-viewer--empty">
@@ -115,6 +173,12 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop
                 isActive={activeTool === 'select'}
                 onSelectionChange={handleSelectionChange}
               />
+              <DrawingOverlay
+                ref={drawingOverlayRef}
+                imageElement={imageRef.current}
+                isActive={activeTool === 'brush'}
+                onApplyDrawing={handleApplyDrawing}
+              />
             </div>
           ) : (
             <video
@@ -135,4 +199,4 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop
       </div>
     </div>
   );
-};
+});

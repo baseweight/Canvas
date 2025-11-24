@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, ask } from "@tauri-apps/plugin-dialog";
 import { Layout } from "./components/Layout";
-import { ImageViewer } from "./components/ImageViewer";
+import { ImageViewer, type ImageViewerRef } from "./components/ImageViewer";
 import { ChatPanel } from "./components/ChatPanel";
 import { ModelSelectionModal } from "./components/ModelSelectionModal";
 import { DownloadModelDialog } from "./components/DownloadModelDialog";
@@ -168,6 +168,7 @@ function App() {
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | undefined>(undefined);
   const [_isModelLoading, setIsModelLoading] = useState(false);
   const [_isGenerating, setIsGenerating] = useState(false);
+  const imageViewerRef = useRef<ImageViewerRef>(null);
 
   // Check if bundled model is downloaded on startup
   useEffect(() => {
@@ -411,6 +412,12 @@ function App() {
       return;
     }
 
+    // Apply any pending edits (e.g., brush strokes) before sending
+    imageViewerRef.current?.applyPendingEdits();
+
+    // Wait a bit for state to update with the edited image
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -543,6 +550,7 @@ function App() {
   return (
     <Layout>
       <ImageViewer
+        ref={imageViewerRef}
         mediaItem={currentMedia}
         onMediaDrop={handleMediaDrop}
         onLoadImage={handleLoadImage}

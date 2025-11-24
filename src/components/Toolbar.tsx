@@ -37,7 +37,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ activeTool, hasSelection, onTo
     { tool: 'load', label: 'Load', icon: '📁' },
     { tool: 'select', label: 'Select', icon: '⬚' },
     { tool: 'crop', label: 'Crop', icon: '✂', disabled: !hasSelection, disabledReason: !hasSelection ? 'Select an area first' : undefined },
-    { tool: 'brush', label: 'Brush', icon: '🖌', disabled: true },
+    { tool: 'brush', label: 'Brush', icon: '🖌' },
   ];
 
   return (
