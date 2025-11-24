@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, ask } from "@tauri-apps/plugin-dialog";
 import { Layout } from "./components/Layout";
 import { ImageViewer } from "./components/ImageViewer";
 import { ChatPanel } from "./components/ChatPanel";
@@ -203,8 +203,24 @@ function App() {
   // Listen for file-opened events from the File menu
   useEffect(() => {
     console.log('Setting up file-opened event listener');
-    const unlisten = listen<string>('file-opened', (event) => {
+    const unlisten = listen<string>('file-opened', async (event) => {
       console.log('file-opened event received:', event);
+
+      // If there's already an image loaded, confirm before resetting session
+      if (currentMedia) {
+        const confirmed = await ask(
+          'Loading a new image will reset the current session and clear the chat history. Do you want to continue?',
+          {
+            title: 'Reset Session?',
+            kind: 'warning',
+          }
+        );
+
+        if (!confirmed) {
+          return; // User cancelled
+        }
+      }
+
       const filePath = event.payload;
       console.log('File path:', filePath);
       const url = convertFileSrc(filePath);
@@ -245,7 +261,7 @@ function App() {
     return () => {
       unlisten.then(fn => fn());
     };
-  }, []);
+  }, [currentMedia]);
 
   // Load model when currentModel changes
   useEffect(() => {
@@ -308,6 +324,21 @@ function App() {
 
   const handleLoadImage = async () => {
     try {
+      // If there's already an image loaded, confirm before resetting session
+      if (currentMedia) {
+        const confirmed = await ask(
+          'Loading a new image will reset the current session and clear the chat history. Do you want to continue?',
+          {
+            title: 'Reset Session?',
+            kind: 'warning',
+          }
+        );
+
+        if (!confirmed) {
+          return; // User cancelled
+        }
+      }
+
       const filePath = await open({
         multiple: false,
         directory: false,
