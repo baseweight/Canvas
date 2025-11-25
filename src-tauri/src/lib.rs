@@ -2,6 +2,7 @@ use tauri::{Manager, Emitter, State};
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri_plugin_dialog::DialogExt;
 use std::time::Duration;
+use serde::{Deserialize, Serialize};
 
 mod llama_inference;
 mod model_manager;
@@ -9,6 +10,13 @@ pub mod inference_engine;
 
 use model_manager::{ModelManager, DownloadProgress};
 use inference_engine::{InferenceEngine, SharedInferenceEngine, create_shared_engine};
+
+// Chat message for conversation history
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: String,     // "user" or "assistant"
+    pub content: String,  // The message text
+}
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -102,16 +110,16 @@ async fn load_model(
     Ok(())
 }
 
-// Run inference with an image
+// Run inference with an image and conversation history
 #[tauri::command]
 async fn generate_response(
-    prompt: String,
+    conversation: Vec<ChatMessage>,
     image_data: Vec<u8>,
     image_width: u32,
     image_height: u32,
     engine: State<'_, SharedInferenceEngine>,
 ) -> Result<String, String> {
-    println!("Generating response for prompt: {}", prompt);
+    println!("Generating response for conversation with {} messages", conversation.len());
 
     // Take ownership of the engine temporarily
     let mut engine_lock = engine.lock().await;
@@ -127,7 +135,7 @@ async fn generate_response(
     // Run inference in a blocking task
     let (response, engine_instance) = tokio::task::spawn_blocking(move || {
         let mut eng = engine_opt.take().unwrap();
-        let result = eng.generate_with_image(&prompt, &image_data, image_width, image_height);
+        let result = eng.generate_with_conversation(&conversation, &image_data, image_width, image_height);
         (result, eng)
     })
     .await

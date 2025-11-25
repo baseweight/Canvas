@@ -456,9 +456,18 @@ function App() {
 
       console.log('Calling inference with image:', img.width, 'x', img.height);
 
-      // Call inference
+      // Build conversation history for backend (all messages + new user message)
+      const allMessages = [...messages, userMessage];
+      const conversation = allMessages.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
+      console.log('Sending conversation with', conversation.length, 'messages');
+
+      // Call inference with full conversation
       const response = await invoke<string>('generate_response', {
-        prompt: content,
+        conversation,
         imageData: rgbData,
         imageWidth: img.width,
         imageHeight: img.height,
