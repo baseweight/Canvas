@@ -1,13 +1,15 @@
-# Crop and Brush Tool Implementation
+# Crop Tool Implementation
 
 ## Date: 2025-11-24
-## Status: Implemented (with known issues)
+## Status: Crop ✅ Implemented | Brush ❌ Removed
 
 ---
 
 ## Overview
 
-This document summarizes the implementation of the crop and brush tools for Baseweight Canvas, completed in preparation for the December 2nd public demo.
+This document summarizes the implementation of image editing tools for Baseweight Canvas, completed in preparation for the December 2nd public demo.
+
+**TL;DR:** Crop tool works great. Brush tool was attempted but removed due to persistent canvas resizing bugs. Focus on reliable crop-only workflow for demo.
 
 ---
 
@@ -66,7 +68,9 @@ const handleCrop = () => {
 
 ---
 
-### 2. Brush Drawing Tool ✅
+### 2. Brush Drawing Tool ❌ REMOVED
+
+**Status: Attempted but removed before demo due to bugs**
 
 **Components Created:**
 - `src/components/DrawingOverlay.tsx` - Handles freehand drawing with mouse
@@ -130,17 +134,34 @@ await new Promise(resolve => setTimeout(resolve, 100)); // Wait for state update
 
 ---
 
+## Brush Tool: Why It Was Removed
+
+**Decision:** Removed brush tool before demo (2025-11-24)
+
+**Reason:** Persistent canvas resizing bugs made it unreliable:
+- Canvas wouldn't resize properly when loading new images
+- Drawing became disabled after image reload
+- Multiple competing `useEffect` hooks caused race conditions
+- Attempted refactor using single effect still exhibited bugs
+- Time pressure before Dec 2nd demo meant focusing on reliable features only
+
+**Files Removed:**
+- `src/components/DrawingOverlay.tsx` (189 lines)
+- `src/components/DrawingOverlay.css` (15 lines)
+
+**Code Still Documented Here For Future Reference**
+
+---
+
 ## Toolbar Integration
 
-**Updated Toolbar:**
+**Final Toolbar (Brush Removed):**
 1. Load (📁) - Opens file dialog
 2. Select (⬚) - Activates rectangular marquee
 3. Crop (✂) - Applies crop (disabled until selection exists)
-4. Brush (🖌) - Activates brush drawing mode
 
 **Tool State Management:**
 - Only one tool active at a time
-- Switching tools auto-applies pending edits
 - Clear visual feedback for active tool
 - Disabled state shown with tooltip explanation
 
@@ -148,66 +169,22 @@ await new Promise(resolve => setTimeout(resolve, 100)); // Wait for state update
 
 ## Known Issues & Limitations
 
-### ⚠️ CRITICAL: Image Merge Performance Issue
-
-**Problem:**
-The image compositing operation (merging drawing overlay with base image) is computationally expensive and blocks the UI thread. This causes:
-- Noticeable delay when switching tools
-- Chat pane freezes during merge
-- User message appears delayed
-- Poor UX when drawing and immediately sending message
-
-**Why It Happens:**
-- `canvas.toBlob()` is synchronous and blocking
-- Large images (e.g., 5712x4284) take significant time to composite
-- React state updates happen after blob creation completes
-- 100ms timeout is insufficient for large images
-
-**Impact:**
-- User sees frozen UI for 500-2000ms on large images
-- Chat messages feel laggy
-- Drawing feels unresponsive
-
-**Potential Solutions (Not Implemented):**
-1. Use Web Workers for image compositing (offload to background thread)
-2. Debounce the apply operation (only merge when idle for 500ms)
-3. Show loading spinner during merge
-4. Use `requestIdleCallback` to defer merge
-5. Reduce image resolution before compositing (lossy but fast)
-
-**Recommendation for Dec 2nd Demo:**
-- Document as known limitation
-- Advise users to use smaller images (<2MP)
-- Consider as P0 fix for production release
-
----
-
-### Other Known Issues
+### Crop Tool Issues
 
 **1. No Undo/Redo**
-- Edits are permanent once applied
-- No way to revert crop or brush strokes
+- Crops are permanent once applied
+- No way to revert crop
 - Workaround: Reload original image (resets session)
 
-**2. No Brush Controls**
-- Color is hardcoded to red (#FF0000)
-- Size is hardcoded to 5px
-- No opacity control
-- No eraser tool
-
-**3. No Visual Feedback During Apply**
-- User doesn't know if drawing is being applied
-- No progress indicator
-- Could confuse users on slow devices
-
-**4. Drawing Only Visible in Brush Mode**
-- Once you switch tools, can't see your drawing until applied
-- Should show preview of pending drawing
-
-**5. Blob URL Memory Leaks**
-- Old blob URLs are not revoked
-- Could cause memory issues with many edits
+**2. Blob URL Memory Leaks**
+- Old blob URLs from crops are not revoked
+- Could cause memory issues with many crops
 - Should call `URL.revokeObjectURL()` on old URLs
+
+**3. No Crop Refinement**
+- Can't adjust selection after starting
+- Must clear and redraw if wrong
+- No resize handles on selection box
 
 ---
 
@@ -235,43 +212,42 @@ The image compositing operation (merging drawing overlay with base image) is com
 ## Demo Readiness Assessment
 
 ### ✅ Ready for Demo
-- Basic crop functionality works
-- Basic brush functionality works
-- UI is functional and discoverable
-- Tools work together (can crop then draw, or draw then crop)
-- Image updates correctly after edits
-- Chat history preserved visually
+- ✅ Crop functionality works reliably
+- ✅ UI is functional and discoverable
+- ✅ Image updates correctly after crop
+- ✅ Chat history preserved visually
+- ✅ Selection tool intuitive and responsive
 
 ### ⚠️ Needs Disclaimer
-- "Image processing may take a moment on large images"
-- "Chat history is for reference only - model doesn't retain context"
-- "These tools are in alpha - expect rough edges"
+- "Chat history is for reference only - model doesn't retain context yet"
+- "Crop cannot be undone - reload image to start over"
 
 ### ❌ Not Demo Ready (Future Work)
-- Performance optimization for large images
-- Brush customization controls
+- Brush tool (attempted but buggy - see above)
 - Undo/redo functionality
-- Visual feedback during processing
-- Memory leak fixes
+- Memory leak fixes for blob URLs
 - Proper multi-turn conversation context
+- Selection refinement (resize handles)
 
 ---
 
 ## Files Created
 
-**New Files:**
-- `src/components/SelectionOverlay.tsx` (147 lines)
-- `src/components/SelectionOverlay.css` (35 lines)
-- `src/components/DrawingOverlay.tsx` (177 lines)
-- `src/components/DrawingOverlay.css` (14 lines)
-- `src/types/selection.ts` (23 lines)
+**New Files (Final):**
+- `src/components/SelectionOverlay.tsx` (147 lines) ✅
+- `src/components/SelectionOverlay.css` (35 lines) ✅
+- `src/types/selection.ts` (23 lines) ✅
 
-**Modified Files:**
-- `src/components/ImageViewer.tsx` - Added crop + brush integration
-- `src/components/Toolbar.tsx` - Updated tool states
-- `src/App.tsx` - Added refs and auto-apply logic
+**Files Created Then Removed:**
+- `src/components/DrawingOverlay.tsx` (189 lines) ❌ DELETED
+- `src/components/DrawingOverlay.css` (15 lines) ❌ DELETED
 
-**Total LOC Added:** ~400 lines
+**Modified Files (Final):**
+- `src/components/ImageViewer.tsx` - Added crop integration
+- `src/components/Toolbar.tsx` - Added Load/Select/Crop tools
+- `src/App.tsx` - Added crop callback
+
+**Total LOC (Final):** ~200 lines
 
 ---
 
