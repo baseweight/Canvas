@@ -90,6 +90,25 @@
   color: #e0e0e0;
 }
 
+.bw-chat-task-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 4px;
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.bw-chat-task-badge--vision {
+  background-color: #22c55e; /* Green */
+}
+
+.bw-chat-task-badge--audio {
+  background-color: #a855f7; /* Purple */
+}
+
 .bw-chat-messages {
   flex: 1;
   overflow-y: auto;

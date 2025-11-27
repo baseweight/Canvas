@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use futures_util::StreamExt;
+use reqwest::header::USER_AGENT;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -61,35 +62,57 @@ impl ModelManager {
     pub async fn is_model_downloaded(&self, model_id: &str) -> Result<bool> {
         let model_dir = self.models_dir.join(model_id);
 
-        // Check if directory exists
         if !model_dir.exists() {
             return Ok(false);
         }
 
-        // For SmolVLM2, check if both required files exist
-        if model_id == "smolvlm2-2.2b-instruct" {
-            let model_file = model_dir.join("SmolVLM2-2.2B-Instruct-Q4_K_M.gguf");
-            let mmproj_file = model_dir.join("mmproj-SmolVLM2-2.2B-Instruct-f16.gguf");
-
-            Ok(model_file.exists() && mmproj_file.exists())
-        } else {
-            // For other models, just check if directory exists
-            Ok(true)
+        // Check if directory has at least one GGUF file
+        let mut entries = tokio::fs::read_dir(&model_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            if let Some(filename) = entry.file_name().to_str() {
+                if filename.ends_with(".gguf") {
+                    return Ok(true);
+                }
+            }
         }
+
+        Ok(false)
     }
 
     pub async fn get_model_paths(&self, model_id: &str) -> Result<(PathBuf, PathBuf)> {
         let model_dir = self.models_dir.join(model_id);
 
-        // For SmolVLM2, use the correct capitalized file names
-        let model_file = model_dir.join("SmolVLM2-2.2B-Instruct-Q4_K_M.gguf");
-        let mmproj_file = model_dir.join("mmproj-SmolVLM2-2.2B-Instruct-f16.gguf");
-
-        if !model_file.exists() || !mmproj_file.exists() {
-            return Err(anyhow!("Model files not found"));
+        if !model_dir.exists() {
+            return Err(anyhow!("Model directory not found: {}", model_id));
         }
 
-        Ok((model_file, mmproj_file))
+        // Find GGUF files in directory
+        let mut language_file: Option<PathBuf> = None;
+        let mut mmproj_file: Option<PathBuf> = None;
+
+        let mut entries = tokio::fs::read_dir(&model_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if let Some(filename) = path.file_name() {
+                let filename_str = filename.to_string_lossy();
+                if filename_str.ends_with(".gguf") {
+                    if filename_str.contains("mmproj") || filename_str.contains("vision") {
+                        mmproj_file = Some(path.clone());
+                    } else if language_file.is_none() {
+                        language_file = Some(path.clone());
+                    }
+                }
+            }
+        }
+
+        match (language_file, mmproj_file) {
+            (Some(lang), Some(mmproj)) => Ok((lang, mmproj)),
+            (Some(lang), None) => {
+                // Unified model - use same file for both
+                Ok((lang.clone(), lang))
+            }
+            _ => Err(anyhow!("No GGUF files found in model directory")),
+        }
     }
 
     pub async fn download_smolvlm2<F>(&self, progress_callback: F) -> Result<()>
@@ -186,6 +209,140 @@ impl ModelManager {
         }
 
         file.flush().await?;
+        Ok(())
+    }
+
+    /// Validate and get model files from HuggingFace repository
+    pub async fn validate_huggingface_repo(&self, repo: &str) -> Result<(String, String, u64, u64)> {
+        // Try manifest API first (supports unified models)
+        let manifest_url = format!("https://huggingface.co/v2/{}/manifests/latest", repo);
+        let client = reqwest::Client::new();
+
+        let response = client
+            .get(&manifest_url)
+            .header(USER_AGENT, "llama-cpp")
+            .send()
+            .await;
+
+        if let Ok(resp) = response {
+            if resp.status().is_success() {
+                #[derive(Deserialize)]
+                struct ManifestResponse {
+                    #[serde(rename = "ggufFile")]
+                    gguf_file: Option<String>,
+                    #[serde(rename = "mmprojFile")]
+                    mmproj_file: Option<String>,
+                }
+
+                if let Ok(manifest) = resp.json::<ManifestResponse>().await {
+                    if let Some(language_file) = manifest.gguf_file {
+                        let vision_file = manifest.mmproj_file.unwrap_or_else(|| language_file.clone());
+
+                        // Get file sizes
+                        let lang_size = self.get_file_size(repo, &language_file).await?;
+                        let vision_size = if vision_file == language_file {
+                            0 // Unified model, don't count twice
+                        } else {
+                            self.get_file_size(repo, &vision_file).await?
+                        };
+
+                        return Ok((language_file, vision_file, lang_size, vision_size));
+                    }
+                }
+            }
+        }
+
+        // Fallback: scan for GGUF files
+        self.scan_repo_for_gguf(repo).await
+    }
+
+    async fn get_file_size(&self, repo: &str, filename: &str) -> Result<u64> {
+        let url = format!("https://huggingface.co/{}/resolve/main/{}", repo, filename);
+        let client = reqwest::Client::new();
+
+        let response = client.head(&url).send().await?;
+
+        if let Some(content_length) = response.headers().get("content-length") {
+            Ok(content_length.to_str()?.parse()?)
+        } else {
+            Ok(0)
+        }
+    }
+
+    async fn scan_repo_for_gguf(&self, repo: &str) -> Result<(String, String, u64, u64)> {
+        let api_url = format!("https://huggingface.co/api/models/{}/tree/main", repo);
+        let client = reqwest::Client::new();
+
+        #[derive(Deserialize)]
+        struct FileInfo {
+            path: String,
+            size: Option<u64>,
+        }
+
+        let response = client.get(&api_url).send().await?;
+        let files: Vec<FileInfo> = response.json().await?;
+
+        let mut language_file: Option<(String, u64)> = None;
+        let mut vision_file: Option<(String, u64)> = None;
+
+        for file in files {
+            let path = file.path.to_lowercase();
+            let size = file.size.unwrap_or(0);
+
+            if path.ends_with(".gguf") {
+                if path.contains("mmproj") || path.contains("vision") {
+                    vision_file = Some((file.path, size));
+                } else if language_file.is_none() {
+                    language_file = Some((file.path, size));
+                }
+            }
+        }
+
+        match (language_file, vision_file) {
+            (Some((lang, lang_size)), Some((vis, vis_size))) => {
+                Ok((lang, vis, lang_size, vis_size))
+            }
+            (Some((lang, lang_size)), None) => {
+                // Unified model
+                Ok((lang.clone(), lang, lang_size, 0))
+            }
+            _ => Err(anyhow!("No GGUF files found in repository")),
+        }
+    }
+
+    /// Generic model download from HuggingFace
+    pub async fn download_from_huggingface<F>(&self, repo: &str, progress_callback: F) -> Result<()>
+    where
+        F: Fn(DownloadProgress) + Send + 'static,
+    {
+        self.ensure_models_directory().await?;
+
+        // Validate and get file info
+        let (language_file, vision_file, lang_size, vision_size) = self.validate_huggingface_repo(repo).await?;
+
+        let is_unified = language_file == vision_file;
+        let model_id = repo.replace("/", "_").replace("-", "_").to_lowercase();
+        let model_dir = self.models_dir.join(&model_id);
+        fs::create_dir_all(&model_dir).await?;
+
+        // Download language model
+        let lang_url = format!("https://huggingface.co/{}/resolve/main/{}", repo, language_file);
+        let lang_path = model_dir.join(&language_file);
+
+        if !lang_path.exists() {
+            self.download_file(&lang_url, &lang_path, &language_file, &progress_callback).await?;
+        }
+
+        // Download vision model if separate
+        if !is_unified {
+            let vision_url = format!("https://huggingface.co/{}/resolve/main/{}", repo, vision_file);
+            let vision_path = model_dir.join(&vision_file);
+
+            if !vision_path.exists() {
+                self.download_file(&vision_url, &vision_path, &vision_file, &progress_callback).await?;
+            }
+        }
+
         Ok(())
     }
 }

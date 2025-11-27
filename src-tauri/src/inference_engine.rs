@@ -252,7 +252,11 @@ extern "C" {
     fn mtmd_free(ctx: *mut MtmdContext);
 
     fn mtmd_bitmap_init(nx: u32, ny: u32, data: *const u8) -> *mut MtmdBitmap;
+    fn mtmd_bitmap_init_from_audio(n_samples: usize, data: *const c_float) -> *mut MtmdBitmap;
+    fn mtmd_bitmap_is_audio(bitmap: *const MtmdBitmap) -> bool;
     fn mtmd_bitmap_free(bitmap: *mut MtmdBitmap);
+    fn mtmd_support_audio(ctx: *mut MtmdContext) -> bool;
+    fn mtmd_get_audio_bitrate(ctx: *mut MtmdContext) -> c_int;
 
     fn mtmd_input_chunks_init() -> *mut MtmdInputChunks;
     fn mtmd_input_chunks_free(chunks: *mut MtmdInputChunks);
@@ -949,6 +953,233 @@ impl InferenceEngine {
             llama_batch_free(batch);
 
             Ok(response)
+        }
+    }
+
+    /// Generate response with audio input
+    pub fn generate_with_audio(
+        &mut self,
+        prompt: &str,
+        audio_samples: &[f32],
+    ) -> Result<String> {
+        unsafe {
+            println!("Starting inference with {} audio samples", audio_samples.len());
+
+            // Clear KV cache for audio (always treat as new)
+            println!("Clearing KV cache for audio input");
+            let mem = llama_get_memory(self.context);
+            llama_memory_clear(mem, true);
+            self.n_past = 0;
+            self.cached_image_hash = None;
+
+            // Create bitmap from audio
+            let bitmap = mtmd_bitmap_init_from_audio(audio_samples.len(), audio_samples.as_ptr());
+            if bitmap.is_null() {
+                return Err(anyhow!("Failed to create audio bitmap"));
+            }
+
+            // Verify it's recognized as audio
+            if !mtmd_bitmap_is_audio(bitmap) {
+                mtmd_bitmap_free(bitmap);
+                return Err(anyhow!("Bitmap not recognized as audio"));
+            }
+
+            println!("Audio bitmap created successfully");
+
+            // Get default media marker and add to prompt
+            let marker = std::ffi::CStr::from_ptr(mtmd_default_marker()).to_str()?;
+            let prompt_with_audio = if !prompt.contains(marker) {
+                format!(" {} {}", marker, prompt)
+            } else {
+                prompt.to_string()
+            };
+
+            // Apply chat template
+            let role_c = CString::new("user")?;
+            let content_c = CString::new(prompt_with_audio)?;
+
+            let chat_msg = LlamaChatMessage {
+                role: role_c.as_ptr(),
+                content: content_c.as_ptr(),
+            };
+
+            let mut formatted_prompt = vec![0u8; 8192];
+            let n_bytes = llama_chat_apply_template(
+                std::ptr::null(),
+                &chat_msg,
+                1,
+                true,
+                formatted_prompt.as_mut_ptr() as *mut c_char,
+                formatted_prompt.len() as c_int,
+            );
+
+            if n_bytes < 0 {
+                mtmd_bitmap_free(bitmap);
+                return Err(anyhow!("Failed to apply chat template"));
+            }
+
+            formatted_prompt.truncate(n_bytes as usize);
+            let formatted_str = String::from_utf8(formatted_prompt)?;
+            println!("Formatted prompt: {}", formatted_str);
+
+            let formatted_c = CString::new(formatted_str)?;
+
+            let input_text = MtmdInputText {
+                text: formatted_c.as_ptr(),
+                add_special: true,
+                parse_special: true,
+            };
+
+            // Tokenize with audio
+            let chunks = mtmd_input_chunks_init();
+            let bitmaps = [bitmap];
+            let ret = mtmd_tokenize(
+                self.mtmd_ctx,
+                chunks,
+                &input_text,
+                bitmaps.as_ptr(),
+                1,
+            );
+
+            if ret != 0 {
+                mtmd_bitmap_free(bitmap);
+                mtmd_input_chunks_free(chunks);
+                return Err(anyhow!("Failed to tokenize audio input"));
+            }
+
+            // Evaluate all chunks including audio
+            let mut temp_n_past: LlamaPos = 0;
+            let ret = mtmd_helper_eval_chunks(
+                self.mtmd_ctx,
+                self.context,
+                chunks,
+                0,
+                0,
+                512,
+                true,
+                &mut temp_n_past,
+            );
+
+            mtmd_bitmap_free(bitmap);
+            mtmd_input_chunks_free(chunks);
+
+            if ret != 0 {
+                return Err(anyhow!("Failed to evaluate audio chunks, error code: {}", ret));
+            }
+
+            let new_n_past = temp_n_past;
+            println!("Audio chunks evaluated successfully, n_past: {}", new_n_past);
+
+            // Create sampler for token generation
+            let sampler_params = llama_sampler_chain_default_params();
+            let sampler = llama_sampler_chain_init(sampler_params);
+
+            // Add sampling strategies
+            llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
+            llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1));
+            llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
+            llama_sampler_chain_add(sampler, llama_sampler_init_dist(42));
+
+            // Get vocab and EOS tokens
+            let vocab = llama_model_get_vocab(self.model);
+            let eos_token = llama_vocab_eos(vocab);
+            let eot_token = llama_vocab_eot(vocab);
+
+            // Generate response tokens
+            let mut response = String::new();
+            let max_tokens = 512;
+            let mut n_generated = 0;
+            let mut n_past = new_n_past;
+
+            // Create a batch for single token generation
+            let batch = llama_batch_init(1, 0, 1);
+
+            for _ in 0..max_tokens {
+                // Sample next token
+                let new_token = llama_sampler_sample(sampler, self.context, -1);
+
+                // Check for end of generation
+                if new_token == eos_token || new_token == eot_token {
+                    break;
+                }
+
+                // Accept the token (updates sampler state)
+                llama_sampler_accept(sampler, new_token);
+
+                // Decode token to text
+                let mut token_str = vec![0u8; 256];
+                let n_bytes = llama_token_to_piece(
+                    vocab,
+                    new_token,
+                    token_str.as_mut_ptr() as *mut c_char,
+                    token_str.len() as c_int,
+                    0, // lstrip
+                    false, // special
+                );
+
+                if n_bytes > 0 {
+                    token_str.truncate(n_bytes as usize);
+                    if let Ok(s) = String::from_utf8(token_str) {
+                        response.push_str(&s);
+                        print!("{}", s);
+                        std::io::Write::flush(&mut std::io::stdout()).ok();
+                    }
+                }
+
+                n_generated += 1;
+
+                // Prepare batch for next token
+                let batch_for_decode = LlamaBatch {
+                    n_tokens: 1,
+                    token: batch.token,
+                    embd: batch.embd,
+                    pos: batch.pos,
+                    n_seq_id: batch.n_seq_id,
+                    seq_id: batch.seq_id,
+                    logits: batch.logits,
+                };
+
+                *batch_for_decode.token = new_token;
+                *batch_for_decode.pos = n_past;
+                *batch_for_decode.n_seq_id = 1;
+                let seq_id_ptr = *batch_for_decode.seq_id;
+                *seq_id_ptr = 0;
+                *batch_for_decode.logits = 1;
+
+                // Decode next token
+                let ret = llama_decode(self.context, batch_for_decode);
+                if ret != 0 {
+                    println!("\nWarning: Failed to decode token at position {}", n_generated);
+                    break;
+                }
+
+                n_past += 1;
+            }
+
+            println!("\n\nGenerated {} tokens", n_generated);
+
+            // Update our n_past for future calls
+            self.n_past = n_past;
+
+            // Cleanup
+            llama_sampler_free(sampler);
+            llama_batch_free(batch);
+
+            Ok(response)
+        }
+    }
+
+    /// Check if the model supports audio input
+    pub fn supports_audio(&self) -> bool {
+        unsafe {
+            mtmd_support_audio(self.mtmd_ctx)
+        }
+    }
+
+    /// Get the expected audio sample rate (bitrate) for this model
+    pub fn get_audio_sample_rate(&self) -> i32 {
+        unsafe {
+            mtmd_get_audio_bitrate(self.mtmd_ctx)
         }
     }
 

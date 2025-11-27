@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 mod llama_inference;
 mod model_manager;
 pub mod inference_engine;
+mod audio_decoder;
 
 use model_manager::{ModelManager, DownloadProgress};
 use inference_engine::{InferenceEngine, SharedInferenceEngine, create_shared_engine};
+use audio_decoder::decode_audio_file;
 
 // Chat message for conversation history
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +150,101 @@ async fn generate_response(
     response.map_err(|e| e.to_string())
 }
 
+// Check if the current model supports audio
+#[tauri::command]
+async fn check_audio_support(
+    engine: State<'_, SharedInferenceEngine>,
+) -> Result<bool, String> {
+    let engine_lock = engine.lock().await;
+
+    if let Some(eng) = engine_lock.as_ref() {
+        Ok(eng.supports_audio())
+    } else {
+        Err("Model not loaded".to_string())
+    }
+}
+
+// Download a model from HuggingFace
+#[tauri::command]
+async fn download_model(
+    repo: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let manager = ModelManager::new().map_err(|e| e.to_string())?;
+
+    // Convert repo to model_id
+    let model_id = repo.replace("/", "_").replace("-", "_").to_lowercase();
+
+    manager
+        .download_from_huggingface(&repo, move |progress: DownloadProgress| {
+            // Emit progress to frontend
+            let _ = app.emit("download-progress", &progress);
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(model_id)
+}
+
+// Run inference with an audio file
+#[tauri::command]
+async fn generate_response_audio(
+    prompt: String,
+    audio_path: String,
+    engine: State<'_, SharedInferenceEngine>,
+) -> Result<String, String> {
+    println!("Generating response for audio file: {}", audio_path);
+
+    // Decode audio file
+    let audio_data = tokio::task::spawn_blocking(move || {
+        decode_audio_file(&audio_path)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| format!("Failed to decode audio: {}", e))?;
+
+    println!("Audio decoded: {} samples at {} Hz",
+             audio_data.samples.len(), audio_data.sample_rate);
+
+    // Take ownership of the engine temporarily
+    let mut engine_lock = engine.lock().await;
+    let mut engine_opt = engine_lock.take();
+
+    if engine_opt.is_none() {
+        return Err("Model not loaded".to_string());
+    }
+
+    // Get the expected sample rate from the model
+    let target_sample_rate = engine_opt.as_ref().unwrap().get_audio_sample_rate() as u32;
+    println!("Model expects audio at {} Hz", target_sample_rate);
+
+    // Drop the lock before the blocking operation
+    drop(engine_lock);
+
+    // Resample audio if needed and run inference in a blocking task
+    let (response, engine_instance) = tokio::task::spawn_blocking(move || {
+        let mut eng = engine_opt.take().unwrap();
+
+        // Resample audio to target sample rate
+        use crate::audio_decoder::resample;
+        let resampled_samples = resample(&audio_data.samples, audio_data.sample_rate, target_sample_rate);
+        println!("Resampled from {} Hz to {} Hz: {} -> {} samples",
+                 audio_data.sample_rate, target_sample_rate,
+                 audio_data.samples.len(), resampled_samples.len());
+
+        let result = eng.generate_with_audio(&prompt, &resampled_samples);
+        (result, eng)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+
+    // Put the engine back
+    let mut engine_lock = engine.lock().await;
+    *engine_lock = Some(engine_instance);
+
+    response.map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -159,9 +256,12 @@ pub fn run() {
             is_bundled_model_downloaded,
             get_models_directory,
             download_bundled_model,
+            download_model,
             get_model_paths,
             load_model,
-            generate_response
+            generate_response,
+            check_audio_support,
+            generate_response_audio
         ])
         .setup(|app| {
             // Create menu for main window only
@@ -197,18 +297,19 @@ pub fn run() {
             if event.id() == "open" {
                 println!("Open menu clicked");
                 let app_handle = app.clone();
+
+                // No filters - show all files
                 app.dialog()
                     .file()
-                    .add_filter("Images", &["png", "jpg", "jpeg", "gif", "bmp", "webp"])
                     .pick_file(move |file_path| {
-                        println!("File picker callback - file_path: {:?}", file_path);
-                        if let Some(path) = file_path {
-                            let path_str = path.to_string();
-                            println!("Emitting file-opened event with path: {}", path_str);
-                            let result = app_handle.emit("file-opened", path_str);
-                            println!("Emit result: {:?}", result);
-                        }
-                    });
+                    println!("File picker callback - file_path: {:?}", file_path);
+                    if let Some(path) = file_path {
+                        let path_str = path.to_string();
+                        println!("Emitting file-opened event with path: {}", path_str);
+                        let result = app_handle.emit("file-opened", path_str);
+                        println!("Emit result: {:?}", result);
+                    }
+                });
             }
         })
         .run(tauri::generate_context!())

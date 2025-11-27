@@ -2,7 +2,7 @@
 
 export interface MediaItem {
   id: string;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'audio';
   url: string;
   filename: string;
   size: number;
@@ -16,6 +16,7 @@ export interface MediaItem {
 
 export type ModelTask =
   | 'general-vlm'      // General purpose vision-language model
+  | 'audio-llm'        // Audio-capable language model
   | 'ocr'              // Optical character recognition
   | 'classifier'       // Content classification (e.g., NSFW detection)
   | 'captioning'       // Image captioning

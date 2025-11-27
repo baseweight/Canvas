@@ -111,6 +111,20 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     description: 'Ultra-compact 500M parameter vision model, perfect for edge devices',
   },
 
+  // Audio models
+  {
+    id: 'ggml_org_ultravox_v0_5_llama_3_2_1b',
+    name: 'ultravox-v0_5-llama-3_2-1b-GGUF',
+    displayName: 'Ultravox v0.5 Llama 3.2 1B',
+    task: 'audio-llm',
+    taskDescription: 'Audio Capable Language Model',
+    backend: 'llama.cpp',
+    huggingfaceUrl: 'https://huggingface.co/ggml-org/ultravox-v0_5-llama-3_2-1b-GGUF',
+    size: 2.2 * 1024 * 1024 * 1024,
+    quantization: 'Q4_K_M',
+    description: 'Audio-capable language model based on Llama 3.2, supports speech understanding',
+  },
+
   // LiquidAI LFM2-VL models
   {
     id: 'lfm2-vl-3b',
@@ -168,6 +182,7 @@ function App() {
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | undefined>(undefined);
   const [_isModelLoading, setIsModelLoading] = useState(false);
   const [_isGenerating, setIsGenerating] = useState(false);
+  const [isAudioCapable, setIsAudioCapable] = useState(false);
 
   // Check if bundled model is downloaded on startup
   useEffect(() => {
@@ -225,37 +240,57 @@ function App() {
       console.log('File path:', filePath);
       const url = convertFileSrc(filePath);
       console.log('Converted URL:', url);
-      const filename = filePath.split('/').pop() || filePath.split('\\').pop() || 'image';
+      const filename = filePath.split('/').pop() || filePath.split('\\').pop() || 'file';
       console.log('Filename:', filename);
 
-      // Create image element to get dimensions
-      const img = new Image();
+      // Determine file type based on extension
+      const extension = filename.split('.').pop()?.toLowerCase() || '';
+      const audioExtensions = ['wav', 'mp3', 'flac'];
+      const isAudio = audioExtensions.includes(extension);
 
-      img.onload = () => {
+      if (isAudio) {
+        // Handle audio file
         const mediaItem: MediaItem = {
           id: crypto.randomUUID(),
-          type: 'image',
-          url,
+          type: 'audio',
+          url: filePath, // Store the file path for audio files
           filename,
           size: 0, // Size not available from file path
-          dimensions: {
-            width: img.width,
-            height: img.height,
-          },
           createdAt: new Date(),
         };
 
         setCurrentMedia(mediaItem);
-        // Clear messages when new image is loaded
         setMessages([]);
-      };
+      } else {
+        // Handle image file
+        const img = new Image();
 
-      img.onerror = () => {
-        console.error('Failed to load image from:', filePath);
-        alert(`Failed to load image: ${filename}`);
-      };
+        img.onload = () => {
+          const mediaItem: MediaItem = {
+            id: crypto.randomUUID(),
+            type: 'image',
+            url,
+            filename,
+            size: 0, // Size not available from file path
+            dimensions: {
+              width: img.width,
+              height: img.height,
+            },
+            createdAt: new Date(),
+          };
 
-      img.src = url;
+          setCurrentMedia(mediaItem);
+          // Clear messages when new image is loaded
+          setMessages([]);
+        };
+
+        img.onerror = () => {
+          console.error('Failed to load image from:', filePath);
+          alert(`Failed to load image: ${filename}`);
+        };
+
+        img.src = url;
+      }
     });
 
     return () => {
@@ -280,11 +315,23 @@ function App() {
         });
 
         console.log('Model loaded successfully');
+
+        // Check if model supports audio
+        try {
+          const supportsAudio = await invoke<boolean>('check_audio_support');
+          setIsAudioCapable(supportsAudio);
+          console.log('Model audio support:', supportsAudio);
+        } catch (error) {
+          console.error('Failed to check audio support:', error);
+          setIsAudioCapable(false);
+        }
+
         setIsModelLoading(false);
       } catch (error) {
         console.error('Failed to load model:', error);
         alert(`Failed to load model: ${error}`);
         setIsModelLoading(false);
+        setIsAudioCapable(false);
       }
     };
 
@@ -296,9 +343,15 @@ function App() {
 
     const file = files[0];
 
-    // Create image element to get dimensions
-    const img = new Image();
+    // Check if it's an audio file
+    if (file.type.startsWith('audio/')) {
+      alert('Audio files must be opened via File → Open menu (Cmd/Ctrl+O)');
+      return;
+    }
+
+    // Handle image/video files
     const url = URL.createObjectURL(file);
+    const img = new Image();
 
     img.onload = () => {
       const mediaItem: MediaItem = {
@@ -423,24 +476,56 @@ function App() {
     setIsGenerating(true);
 
     try {
-      // Load image and convert to RGB bytes
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
+      let response: string;
 
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-        img.src = currentMedia.url;
-      });
+      if (currentMedia.type === 'audio') {
+        // Handle audio file
+        console.log('Calling inference with audio file:', currentMedia.url);
+        response = await invoke<string>('generate_response_audio', {
+          prompt: content,
+          audioPath: currentMedia.url,
+        });
+      } else {
+        // Handle image file
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
 
-      // Create canvas and get RGB data
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = currentMedia.url;
+        });
 
-      if (!ctx) {
-        throw new Error('Failed to get canvas context');
+        // Create canvas and get RGB data
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+          throw new Error('Failed to get canvas context');
+        }
+
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, img.width, img.height);
+
+        // Convert RGBA to RGB
+        const rgbData: number[] = [];
+        for (let i = 0; i < imageData.data.length; i += 4) {
+          rgbData.push(imageData.data[i]);     // R
+          rgbData.push(imageData.data[i + 1]); // G
+          rgbData.push(imageData.data[i + 2]); // B
+        }
+
+        console.log('Calling inference with image:', img.width, 'x', img.height);
+
+        // Call inference
+        response = await invoke<string>('generate_response', {
+          prompt: content,
+          imageData: rgbData,
+          imageWidth: img.width,
+          imageHeight: img.height,
+        });
       }
 
       ctx.drawImage(img, 0, 0);
@@ -504,10 +589,45 @@ function App() {
     }
   };
 
-  const handleDownloadModel = (modelId: string) => {
+  const handleDownloadModel = async (modelId: string) => {
     console.log('Download model:', modelId);
-    // TODO: Implement actual download logic
-    alert(`Download functionality will be implemented with the Rust backend.\nModel ID: ${modelId}`);
+
+    // Find the model in available models to get the repo
+    const model = MOCK_AVAILABLE_MODELS.find(m => m.id === modelId);
+    if (!model) {
+      alert('Model not found');
+      return;
+    }
+
+    // Extract repo from huggingface URL (e.g., "ggml-org/ultravox-v0_5-llama-3_2-1b-GGUF")
+    const url = new URL(model.huggingfaceUrl);
+    const pathParts = url.pathname.split('/');
+    const repo = `${pathParts[1]}/${pathParts[2]}`; // org/repo
+
+    try {
+      setIsDownloading(true);
+      setDownloadProgress(undefined);
+
+      // Call the download_model command
+      const downloadedModelId = await invoke<string>('download_model', { repo });
+
+      // Model download complete
+      setIsDownloading(false);
+      setIsModelModalOpen(false);
+
+      // Load the downloaded model
+      setCurrentModel({
+        ...model,
+        id: downloadedModelId,
+        downloaded: true,
+      });
+
+      alert(`Model downloaded successfully!\nModel ID: ${downloadedModelId}`);
+    } catch (error) {
+      console.error('Failed to download model:', error);
+      alert(`Failed to download model: ${error}`);
+      setIsDownloading(false);
+    }
   };
 
   const handleAddModel = (repo: string, quantization: string) => {
@@ -562,6 +682,7 @@ function App() {
         messages={messages}
         onChangeModel={() => setIsModelModalOpen(true)}
         onSendMessage={handleSendMessage}
+        isAudioCapable={isAudioCapable}
       />
       <ModelSelectionModal
         isOpen={isModelModalOpen}

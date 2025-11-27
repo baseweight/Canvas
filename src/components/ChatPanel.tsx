@@ -7,6 +7,7 @@ interface ChatPanelProps {
   messages: ChatMessage[];
   onChangeModel: () => void;
   onSendMessage: (message: string) => void;
+  isAudioCapable?: boolean;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -14,6 +15,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   messages,
   onChangeModel,
   onSendMessage,
+  isAudioCapable = false,
 }) => {
   const [inputValue, setInputValue] = useState('');
 
@@ -49,7 +51,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           <label className="bw-chat-label">Task</label>
           {currentModel ? (
             <div className="bw-chat-task-info">
-              <span className="bw-chat-task-name">{currentModel.taskDescription}</span>
+              <span className={`bw-chat-task-badge ${isAudioCapable ? 'bw-chat-task-badge--audio' : 'bw-chat-task-badge--vision'}`}>
+                {isAudioCapable ? 'Audio Capable Language Model' : 'General Vision-Language Model'}
+              </span>
             </div>
           ) : (
             <div className="bw-chat-model-empty">-</div>
@@ -64,7 +68,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <>
                 <p>No messages yet</p>
                 <p className="bw-chat-empty-hint">
-                  {currentModel.taskDescription}
+                  {isAudioCapable ? 'Audio Capable Language Model' : 'General Vision-Language Model'}
                 </p>
               </>
             ) : (
