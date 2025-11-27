@@ -8,6 +8,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use tokio::sync::Mutex;
 
+// Re-export ChatMessage from lib for use in inference engine
+pub use crate::ChatMessage;
+
 // Opaque C types from llama.cpp
 #[repr(C)]
 struct LlamaModel {
@@ -156,6 +159,7 @@ struct LlamaSamplerChainParams {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 struct LlamaChatMessage {
     role: *const c_char,
     content: *const c_char,
@@ -636,6 +640,278 @@ impl InferenceEngine {
 
                 // Prepare batch for next token
                 // Update batch fields via raw pointers (batch doesn't implement Copy)
+                let batch_for_decode = LlamaBatch {
+                    n_tokens: 1,
+                    token: batch.token,
+                    embd: batch.embd,
+                    pos: batch.pos,
+                    n_seq_id: batch.n_seq_id,
+                    seq_id: batch.seq_id,
+                    logits: batch.logits,
+                };
+
+                *batch_for_decode.token = new_token;
+                *batch_for_decode.pos = n_past;
+                *batch_for_decode.n_seq_id = 1;
+                let seq_id_ptr = *batch_for_decode.seq_id;
+                *seq_id_ptr = 0;
+                *batch_for_decode.logits = 1;
+
+                // Decode next token
+                let ret = llama_decode(self.context, batch_for_decode);
+                if ret != 0 {
+                    println!("\nWarning: Failed to decode token at position {}", n_generated);
+                    break;
+                }
+
+                n_past += 1;
+            }
+
+            println!("\n\nGenerated {} tokens", n_generated);
+
+            // Update our n_past for future calls
+            self.n_past = n_past;
+
+            // Cleanup
+            llama_sampler_free(sampler);
+            llama_batch_free(batch);
+
+            Ok(response)
+        }
+    }
+
+    /// Generate response with full conversation history
+    pub fn generate_with_conversation(
+        &mut self,
+        conversation: &[ChatMessage],
+        image_rgb: &[u8],
+        image_width: u32,
+        image_height: u32,
+    ) -> Result<String> {
+        unsafe {
+            println!("Starting inference with {} messages", conversation.len());
+
+            // Compute hash of current image
+            let current_image_hash = compute_image_hash(image_rgb, image_width, image_height);
+
+            // Check if this is a new image or continuation
+            let image_changed = match self.cached_image_hash {
+                Some(cached_hash) => cached_hash != current_image_hash,
+                None => true, // First call
+            };
+
+            if image_changed {
+                // New image - clear KV cache and process from scratch
+                println!("New image detected, clearing KV cache");
+                let mem = llama_get_memory(self.context);
+                llama_memory_clear(mem, true);
+                self.n_past = 0;
+                self.cached_image_hash = Some(current_image_hash);
+            }
+
+            // Get the last user message (the new prompt)
+            let last_message = conversation.last()
+                .ok_or_else(|| anyhow!("Conversation cannot be empty"))?;
+
+            if last_message.role != "user" {
+                return Err(anyhow!("Last message must be from user"));
+            }
+
+            // For new image, add image marker to current (last) user message
+            // For continuation, just use the conversation as-is
+            let conversation_with_image: Vec<ChatMessage>;
+            let conversation_to_use = if image_changed {
+                // New image detected - add marker to the current message (last in conversation)
+                let marker = std::ffi::CStr::from_ptr(mtmd_default_marker()).to_str()?;
+                let last_idx = conversation.len() - 1;
+
+                conversation_with_image = conversation.iter().enumerate().map(|(i, msg)| {
+                    if i == last_idx && msg.role == "user" {
+                        // Add image marker to the current user message
+                        ChatMessage {
+                            role: msg.role.clone(),
+                            content: if msg.content.contains(marker) {
+                                msg.content.clone()
+                            } else {
+                                format!(" {} {}", marker, msg.content)
+                            }
+                        }
+                    } else {
+                        msg.clone()
+                    }
+                }).collect();
+
+                &conversation_with_image[..]
+            } else {
+                // Continuation - use conversation as-is
+                conversation
+            };
+
+            // Convert Rust ChatMessages to C LlamaChatMessage array
+            let c_messages: Vec<_> = conversation_to_use.iter()
+                .map(|msg| {
+                    let role_c = CString::new(msg.role.as_str()).unwrap();
+                    let content_c = CString::new(msg.content.as_str()).unwrap();
+
+                    (
+                        LlamaChatMessage {
+                            role: role_c.as_ptr(),
+                            content: content_c.as_ptr(),
+                        },
+                        role_c,
+                        content_c,
+                    )
+                })
+                .collect();
+
+            // Keep the CStrings alive
+            let chat_msgs: Vec<LlamaChatMessage> = c_messages.iter().map(|(msg, _, _)| *msg).collect();
+
+            // Apply chat template to full conversation
+            let mut formatted_prompt = vec![0u8; 32768]; // Larger buffer for full conversation
+            let n_bytes = llama_chat_apply_template(
+                std::ptr::null(),
+                chat_msgs.as_ptr(),
+                chat_msgs.len(),
+                true, // add_assistant (prepare for model to respond)
+                formatted_prompt.as_mut_ptr() as *mut c_char,
+                formatted_prompt.len() as c_int,
+            );
+
+            if n_bytes < 0 {
+                return Err(anyhow!("Failed to apply chat template to conversation"));
+            }
+
+            formatted_prompt.truncate(n_bytes as usize);
+            let formatted_str = String::from_utf8(formatted_prompt)?;
+            println!("Formatted conversation:\n{}", formatted_str);
+
+            let formatted_c = CString::new(formatted_str)?;
+
+            let input_text = MtmdInputText {
+                text: formatted_c.as_ptr(),
+                add_special: image_changed, // Only add BOS for new image
+                parse_special: true,
+            };
+
+            // Tokenize with image if new, without if continuation
+            let chunks = mtmd_input_chunks_init();
+
+            let ret = if image_changed {
+                // New image - tokenize with bitmap
+                let bitmap = mtmd_bitmap_init(image_width, image_height, image_rgb.as_ptr());
+                if bitmap.is_null() {
+                    mtmd_input_chunks_free(chunks);
+                    return Err(anyhow!("Failed to create bitmap"));
+                }
+
+                let bitmaps = [bitmap];
+                let result = mtmd_tokenize(
+                    self.mtmd_ctx,
+                    chunks,
+                    &input_text,
+                    bitmaps.as_ptr(),
+                    1,
+                );
+
+                mtmd_bitmap_free(bitmap);
+                result
+            } else {
+                // Continuation - tokenize text only
+                mtmd_tokenize(
+                    self.mtmd_ctx,
+                    chunks,
+                    &input_text,
+                    std::ptr::null(),
+                    0,
+                )
+            };
+
+            if ret != 0 {
+                mtmd_input_chunks_free(chunks);
+                return Err(anyhow!("Failed to tokenize conversation"));
+            }
+
+            // Evaluate chunks
+            let mut new_n_past: LlamaPos = 0;
+            let eval_ret = mtmd_helper_eval_chunks(
+                self.mtmd_ctx,
+                self.context,
+                chunks,
+                self.n_past,
+                0,
+                512,
+                true,
+                &mut new_n_past,
+            );
+
+            mtmd_input_chunks_free(chunks);
+
+            if eval_ret != 0 {
+                return Err(anyhow!("Failed to evaluate chunks, error code: {}", eval_ret));
+            }
+
+            println!("Chunks evaluated successfully, n_past: {} -> {}", self.n_past, new_n_past);
+
+            // Create sampler for token generation
+            let sampler_params = llama_sampler_chain_default_params();
+            let sampler = llama_sampler_chain_init(sampler_params);
+
+            // Add sampling strategies
+            llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
+            llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1));
+            llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
+            llama_sampler_chain_add(sampler, llama_sampler_init_dist(42));
+
+            // Get vocab and EOS tokens
+            let vocab = llama_model_get_vocab(self.model);
+            let eos_token = llama_vocab_eos(vocab);
+            let eot_token = llama_vocab_eot(vocab);
+
+            // Generate response tokens
+            let mut response = String::new();
+            let max_tokens = 512;
+            let mut n_generated = 0;
+            let mut n_past = new_n_past;
+
+            // Create a batch for single token generation
+            let batch = llama_batch_init(1, 0, 1);
+
+            for _ in 0..max_tokens {
+                // Sample next token
+                let new_token = llama_sampler_sample(sampler, self.context, -1);
+
+                // Check for end of generation
+                if new_token == eos_token || new_token == eot_token {
+                    break;
+                }
+
+                // Accept the token (updates sampler state)
+                llama_sampler_accept(sampler, new_token);
+
+                // Decode token to text
+                let mut token_str = vec![0u8; 256];
+                let n_bytes = llama_token_to_piece(
+                    vocab,
+                    new_token,
+                    token_str.as_mut_ptr() as *mut c_char,
+                    token_str.len() as c_int,
+                    0, // lstrip
+                    false, // special
+                );
+
+                if n_bytes > 0 {
+                    token_str.truncate(n_bytes as usize);
+                    if let Ok(s) = String::from_utf8(token_str) {
+                        response.push_str(&s);
+                        print!("{}", s);
+                        std::io::Write::flush(&mut std::io::stdout()).ok();
+                    }
+                }
+
+                n_generated += 1;
+
+                // Prepare batch for next token
                 let batch_for_decode = LlamaBatch {
                     n_tokens: 1,
                     token: batch.token,

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open, ask } from "@tauri-apps/plugin-dialog";
 import { Layout } from "./components/Layout";
 import { ImageViewer } from "./components/ImageViewer";
 import { ChatPanel } from "./components/ChatPanel";
@@ -202,8 +203,24 @@ function App() {
   // Listen for file-opened events from the File menu
   useEffect(() => {
     console.log('Setting up file-opened event listener');
-    const unlisten = listen<string>('file-opened', (event) => {
+    const unlisten = listen<string>('file-opened', async (event) => {
       console.log('file-opened event received:', event);
+
+      // If there's already an image loaded, confirm before resetting session
+      if (currentMedia) {
+        const confirmed = await ask(
+          'Loading a new image will reset the current session and clear the chat history. Do you want to continue?',
+          {
+            title: 'Reset Session?',
+            kind: 'warning',
+          }
+        );
+
+        if (!confirmed) {
+          return; // User cancelled
+        }
+      }
+
       const filePath = event.payload;
       console.log('File path:', filePath);
       const url = convertFileSrc(filePath);
@@ -244,7 +261,7 @@ function App() {
     return () => {
       unlisten.then(fn => fn());
     };
-  }, []);
+  }, [currentMedia]);
 
   // Load model when currentModel changes
   useEffect(() => {
@@ -305,6 +322,90 @@ function App() {
     img.src = url;
   };
 
+  const handleImageCrop = (croppedImageUrl: string) => {
+    // Create a new image to get dimensions
+    const img = new Image();
+    img.onload = () => {
+      setCurrentMedia(prev => prev ? {
+        ...prev,
+        url: croppedImageUrl,
+        dimensions: {
+          width: img.width,
+          height: img.height,
+        },
+      } : prev);
+    };
+    img.src = croppedImageUrl;
+  };
+
+  const handleLoadImage = async () => {
+    try {
+      // If there's already an image loaded, confirm before resetting session
+      if (currentMedia) {
+        const confirmed = await ask(
+          'Loading a new image will reset the current session and clear the chat history. Do you want to continue?',
+          {
+            title: 'Reset Session?',
+            kind: 'warning',
+          }
+        );
+
+        if (!confirmed) {
+          return; // User cancelled
+        }
+      }
+
+      const filePath = await open({
+        multiple: false,
+        directory: false,
+        filters: [
+          {
+            name: 'Images',
+            extensions: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
+          },
+        ],
+      });
+
+      if (!filePath) {
+        return; // User cancelled
+      }
+
+      const url = convertFileSrc(filePath);
+      const filename = filePath.split('/').pop() || filePath.split('\\').pop() || 'image';
+
+      // Create image element to get dimensions
+      const img = new Image();
+
+      img.onload = () => {
+        const mediaItem: MediaItem = {
+          id: crypto.randomUUID(),
+          type: 'image',
+          url,
+          filename,
+          size: 0,
+          dimensions: {
+            width: img.width,
+            height: img.height,
+          },
+          createdAt: new Date(),
+        };
+
+        setCurrentMedia(mediaItem);
+        // Clear messages when new image is loaded
+        setMessages([]);
+      };
+
+      img.onerror = () => {
+        console.error('Failed to load image from:', filePath);
+        alert(`Failed to load image: ${filename}`);
+      };
+
+      img.src = url;
+    } catch (error) {
+      console.error('Failed to open file dialog:', error);
+    }
+  };
+
   const handleSendMessage = async (content: string) => {
     if (!currentMedia || !currentModel) {
       return;
@@ -355,9 +456,18 @@ function App() {
 
       console.log('Calling inference with image:', img.width, 'x', img.height);
 
-      // Call inference
+      // Build conversation history for backend (all messages + new user message)
+      const allMessages = [...messages, userMessage];
+      const conversation = allMessages.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
+      console.log('Sending conversation with', conversation.length, 'messages');
+
+      // Call inference with full conversation
       const response = await invoke<string>('generate_response', {
-        prompt: content,
+        conversation,
         imageData: rgbData,
         imageWidth: img.width,
         imageHeight: img.height,
@@ -444,6 +554,8 @@ function App() {
       <ImageViewer
         mediaItem={currentMedia}
         onMediaDrop={handleMediaDrop}
+        onLoadImage={handleLoadImage}
+        onImageCrop={handleImageCrop}
       />
       <ChatPanel
         currentModel={currentModel}
