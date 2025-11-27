@@ -519,44 +519,23 @@ function App() {
 
         console.log('Calling inference with image:', img.width, 'x', img.height);
 
-        // Call inference
+        // Build conversation history for backend (all messages + new user message)
+        const allMessages = [...messages, userMessage];
+        const conversation = allMessages.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+
+        console.log('Sending conversation with', conversation.length, 'messages');
+
+        // Call inference with full conversation
         response = await invoke<string>('generate_response', {
-          prompt: content,
+          conversation,
           imageData: rgbData,
           imageWidth: img.width,
           imageHeight: img.height,
         });
       }
-
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, img.width, img.height);
-
-      // Convert RGBA to RGB
-      const rgbData: number[] = [];
-      for (let i = 0; i < imageData.data.length; i += 4) {
-        rgbData.push(imageData.data[i]);     // R
-        rgbData.push(imageData.data[i + 1]); // G
-        rgbData.push(imageData.data[i + 2]); // B
-      }
-
-      console.log('Calling inference with image:', img.width, 'x', img.height);
-
-      // Build conversation history for backend (all messages + new user message)
-      const allMessages = [...messages, userMessage];
-      const conversation = allMessages.map(msg => ({
-        role: msg.role,
-        content: msg.content,
-      }));
-
-      console.log('Sending conversation with', conversation.length, 'messages');
-
-      // Call inference with full conversation
-      const response = await invoke<string>('generate_response', {
-        conversation,
-        imageData: rgbData,
-        imageWidth: img.width,
-        imageHeight: img.height,
-      });
 
       const assistantMessage: ChatMessage = {
         id: crypto.randomUUID(),
