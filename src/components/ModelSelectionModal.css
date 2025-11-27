@@ -312,3 +312,20 @@
   border-color: #505050;
   background-color: #2d2d2d;
 }
+
+.bw-button-success {
+  background-color: #22c55e;
+  border: none;
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.bw-button-success:hover {
+  background-color: #16a34a;
+}

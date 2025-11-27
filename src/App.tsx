@@ -47,7 +47,7 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     description: 'Popular compact vision-language model from HuggingFace, excellent quality-to-size ratio',
   },
   {
-    id: 'smolvlm2-500m-video',
+    id: 'ggml_org_smolvlm2_500m_video_instruct_gguf',
     name: 'SmolVLM2-500M-Video-Instruct-GGUF',
     displayName: 'SmolVLM2 500M Video',
     task: 'general-vlm',
@@ -113,7 +113,7 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
 
   // Audio models
   {
-    id: 'ggml_org_ultravox_v0_5_llama_3_2_1b',
+    id: 'ggml_org_ultravox_v0_5_llama_3_2_1b_gguf',
     name: 'ultravox-v0_5-llama-3_2-1b-GGUF',
     displayName: 'Ultravox v0.5 Llama 3.2 1B',
     task: 'audio-llm',
@@ -181,8 +181,9 @@ function App() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | undefined>(undefined);
   const [_isModelLoading, setIsModelLoading] = useState(false);
-  const [_isGenerating, setIsGenerating] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [isAudioCapable, setIsAudioCapable] = useState(false);
+  const [downloadedModels, setDownloadedModels] = useState<Model[]>([]);
 
   // Check if bundled model is downloaded on startup
   useEffect(() => {
@@ -213,6 +214,53 @@ function App() {
     return () => {
       unlisten.then(fn => fn());
     };
+  }, []);
+
+  // Load all downloaded models on startup
+  useEffect(() => {
+    const loadDownloadedModels = async () => {
+      try {
+        const modelIds = await invoke<string[]>('list_downloaded_models');
+
+        // Convert model IDs to full Model objects
+        const models: Model[] = modelIds.map(modelId => {
+          // Check if it's the bundled model
+          if (modelId === BUNDLED_MODEL.id) {
+            return BUNDLED_MODEL;
+          }
+
+          // Find in available models
+          const availableModel = MOCK_AVAILABLE_MODELS.find(m => m.id === modelId);
+          if (availableModel) {
+            return {
+              ...availableModel,
+              localPath: `/models/${modelId}`,
+              downloaded: true,
+            } as Model;
+          }
+
+          // Fallback for unknown models
+          return {
+            id: modelId,
+            name: modelId,
+            displayName: modelId,
+            task: 'general-vlm',
+            taskDescription: 'General Vision-Language Model',
+            backend: 'llama.cpp',
+            huggingfaceUrl: `https://huggingface.co/${modelId}`,
+            size: 0,
+            localPath: `/models/${modelId}`,
+            downloaded: true,
+          } as Model;
+        });
+
+        setDownloadedModels(models);
+      } catch (error) {
+        console.error('Failed to load downloaded models:', error);
+      }
+    };
+
+    loadDownloadedModels();
   }, []);
 
   // Listen for file-opened events from the File menu
@@ -560,7 +608,7 @@ function App() {
   };
 
   const handleSelectModel = (modelId: string) => {
-    const model = MOCK_DOWNLOADED_MODELS.find(m => m.id === modelId);
+    const model = downloadedModels.find(m => m.id === modelId);
     if (model) {
       setCurrentModel(model);
       // Clear messages when switching models
@@ -594,12 +642,18 @@ function App() {
       setIsDownloading(false);
       setIsModelModalOpen(false);
 
-      // Load the downloaded model
-      setCurrentModel({
+      // Create the downloaded model object
+      const downloadedModel: Model = {
         ...model,
         id: downloadedModelId,
         downloaded: true,
-      });
+      };
+
+      // Add to downloaded models list
+      setDownloadedModels(prev => [...prev, downloadedModel]);
+
+      // Load the downloaded model
+      setCurrentModel(downloadedModel);
 
       alert(`Model downloaded successfully!\nModel ID: ${downloadedModelId}`);
     } catch (error) {
@@ -662,12 +716,13 @@ function App() {
         onChangeModel={() => setIsModelModalOpen(true)}
         onSendMessage={handleSendMessage}
         isAudioCapable={isAudioCapable}
+        isGenerating={isGenerating}
       />
       <ModelSelectionModal
         isOpen={isModelModalOpen}
         onClose={() => setIsModelModalOpen(false)}
         currentModel={currentModel}
-        downloadedModels={MOCK_DOWNLOADED_MODELS}
+        downloadedModels={downloadedModels}
         availableModels={MOCK_AVAILABLE_MODELS}
         onSelectModel={handleSelectModel}
         onDownloadModel={handleDownloadModel}

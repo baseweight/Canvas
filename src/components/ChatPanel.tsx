@@ -8,6 +8,7 @@ interface ChatPanelProps {
   onChangeModel: () => void;
   onSendMessage: (message: string) => void;
   isAudioCapable?: boolean;
+  isGenerating?: boolean;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -16,6 +17,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onChangeModel,
   onSendMessage,
   isAudioCapable = false,
+  isGenerating = false,
 }) => {
   const [inputValue, setInputValue] = useState('');
 
@@ -81,19 +83,35 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             )}
           </div>
         ) : (
-          messages.map(message => (
-            <div
-              key={message.id}
-              className={`bw-chat-message bw-chat-message--${message.role}`}
-            >
-              <div className="bw-chat-message-role">
-                {message.role === 'user' ? 'You' : currentModel?.displayName || 'Assistant'}
+          <>
+            {messages.map(message => (
+              <div
+                key={message.id}
+                className={`bw-chat-message bw-chat-message--${message.role}`}
+              >
+                <div className="bw-chat-message-role">
+                  {message.role === 'user' ? 'You' : currentModel?.displayName || 'Assistant'}
+                </div>
+                <div className="bw-chat-message-content">
+                  {message.content}
+                </div>
               </div>
-              <div className="bw-chat-message-content">
-                {message.content}
+            ))}
+            {isGenerating && (
+              <div className="bw-chat-message bw-chat-message--assistant bw-chat-message--loading">
+                <div className="bw-chat-message-role">
+                  {currentModel?.displayName || 'Assistant'}
+                </div>
+                <div className="bw-chat-message-content">
+                  <div className="bw-chat-loading">
+                    <span className="bw-chat-loading-dot"></span>
+                    <span className="bw-chat-loading-dot"></span>
+                    <span className="bw-chat-loading-dot"></span>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))
+            )}
+          </>
         )}
       </div>
 

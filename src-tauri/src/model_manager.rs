@@ -46,6 +46,11 @@ impl ModelManager {
         Ok(Self { models_dir })
     }
 
+    /// Create a ModelManager with a custom models directory (for testing)
+    pub fn with_models_dir(models_dir: std::path::PathBuf) -> Self {
+        Self { models_dir }
+    }
+
     pub fn get_models_directory() -> Result<PathBuf> {
         let dirs = directories::ProjectDirs::from("ai", "baseweight", "Canvas")
             .ok_or_else(|| anyhow!("Failed to get project directories"))?;
@@ -77,6 +82,30 @@ impl ModelManager {
         }
 
         Ok(false)
+    }
+
+    pub async fn list_downloaded_models(&self) -> Result<Vec<String>> {
+        let mut models = Vec::new();
+
+        if !self.models_dir.exists() {
+            return Ok(models);
+        }
+
+        let mut entries = tokio::fs::read_dir(&self.models_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            if let Ok(file_type) = entry.file_type().await {
+                if file_type.is_dir() {
+                    if let Some(model_id) = entry.file_name().to_str() {
+                        // Check if this directory contains at least one GGUF file
+                        if self.is_model_downloaded(model_id).await? {
+                            models.push(model_id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(models)
     }
 
     pub async fn get_model_paths(&self, model_id: &str) -> Result<(PathBuf, PathBuf)> {
@@ -156,6 +185,56 @@ impl ModelManager {
         Ok(())
     }
 
+    /// Verify that a model is multimodal by checking HuggingFace API metadata
+    async fn verify_multimodal_model(&self, repo: &str) -> Result<()> {
+        let api_url = format!("https://huggingface.co/api/models/{}", repo);
+        let client = reqwest::Client::new();
+
+        #[derive(Deserialize)]
+        struct ModelInfo {
+            pipeline_tag: Option<String>,
+            tags: Option<Vec<String>>,
+        }
+
+        let response = client.get(&api_url).send().await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Failed to fetch model info from HuggingFace API"));
+        }
+
+        let model_info: ModelInfo = response.json().await?;
+
+        // Check if it's a multimodal model
+        let is_multimodal = match model_info.pipeline_tag.as_deref() {
+            Some("image-text-to-text") => true,
+            Some("audio-text-to-text") => true,
+            Some("visual-question-answering") => true,
+            Some("video-text-to-text") => true,
+            _ => {
+                // Also check tags
+                model_info.tags.as_ref().map_or(false, |tags| {
+                    tags.iter().any(|tag| {
+                        tag.contains("vision") ||
+                        tag.contains("multimodal") ||
+                        tag.contains("vlm") ||
+                        tag.contains("audio") ||
+                        tag.contains("image-text")
+                    })
+                })
+            }
+        };
+
+        if !is_multimodal {
+            return Err(anyhow!(
+                "Model '{}' does not appear to be a multimodal (vision/audio) model. \
+                Baseweight Canvas requires vision-language or audio models with mmproj support.",
+                repo
+            ));
+        }
+
+        Ok(())
+    }
+
     async fn download_file<F>(
         &self,
         url: &str,
@@ -214,6 +293,9 @@ impl ModelManager {
 
     /// Validate and get model files from HuggingFace repository
     pub async fn validate_huggingface_repo(&self, repo: &str) -> Result<(String, String, u64, u64)> {
+        // First, check if the model is actually multimodal via HF API
+        self.verify_multimodal_model(repo).await?;
+
         // Try manifest API first (supports unified models)
         let manifest_url = format!("https://huggingface.co/v2/{}/manifests/latest", repo);
         let client = reqwest::Client::new();
@@ -344,5 +426,168 @@ impl ModelManager {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_get_models_directory() {
+        let result = ModelManager::get_models_directory();
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.to_string_lossy().contains("canvas"));
+        assert!(path.to_string_lossy().contains("models"));
+    }
+
+    #[tokio::test]
+    async fn test_model_manager_creation() {
+        let manager = ModelManager::new();
+        assert!(manager.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_is_model_downloaded_nonexistent() {
+        let manager = ModelManager::new().unwrap();
+        let result = manager.is_model_downloaded("nonexistent-model-xyz-123").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), false);
+    }
+
+    #[tokio::test]
+    async fn test_list_downloaded_models_empty() {
+        // Create a temporary directory for this test
+        let temp_dir = TempDir::new().unwrap();
+        let manager = ModelManager::with_models_dir(temp_dir.path().to_path_buf());
+
+        let result = manager.list_downloaded_models().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_model_paths_nonexistent() {
+        let manager = ModelManager::new().unwrap();
+        let result = manager.get_model_paths("nonexistent-model-xyz-123").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    // Test with real HuggingFace API - marked as #[ignore] so it doesn't run by default
+    // Run with: cargo test -- --ignored --test-threads=1
+    #[tokio::test]
+    #[ignore]
+    async fn test_verify_multimodal_model_valid_vision() {
+        let manager = ModelManager::new().unwrap();
+
+        // Test with SmolVLM2 (known vision model)
+        let result = manager.verify_multimodal_model("ggml-org/SmolVLM2-2.2B-Instruct-GGUF").await;
+        assert!(result.is_ok(), "SmolVLM2 should be recognized as multimodal");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_verify_multimodal_model_valid_audio() {
+        let manager = ModelManager::new().unwrap();
+
+        // Test with Ultravox (known audio model)
+        let result = manager.verify_multimodal_model("ggml-org/ultravox-v0_5-llama-3_2-1b-GGUF").await;
+        assert!(result.is_ok(), "Ultravox should be recognized as multimodal");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_verify_multimodal_model_invalid_text_only() {
+        let manager = ModelManager::new().unwrap();
+
+        // Test with a text-only model (should fail)
+        let result = manager.verify_multimodal_model("meta-llama/Llama-2-7b-hf").await;
+        assert!(result.is_err(), "Text-only Llama model should be rejected");
+        assert!(result.unwrap_err().to_string().contains("multimodal"));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_validate_huggingface_repo_valid() {
+        let manager = ModelManager::new().unwrap();
+
+        // Test with SmolVLM2
+        let result = manager.validate_huggingface_repo("ggml-org/SmolVLM2-2.2B-Instruct-GGUF").await;
+        assert!(result.is_ok());
+
+        let (lang_file, vision_file, lang_size, vision_size) = result.unwrap();
+        assert!(lang_file.ends_with(".gguf"));
+        assert!(vision_file.ends_with(".gguf"));
+        assert!(lang_size > 0);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_validate_huggingface_repo_invalid() {
+        let manager = ModelManager::new().unwrap();
+
+        // Test with non-existent repo
+        let result = manager.validate_huggingface_repo("nonexistent/fake-model-12345").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_scan_repo_for_gguf_with_mmproj() {
+        let manager = ModelManager::new().unwrap();
+
+        // Test scanning a real repo with separate mmproj file
+        let result = manager.scan_repo_for_gguf("ggml-org/SmolVLM2-2.2B-Instruct-GGUF").await;
+        assert!(result.is_ok());
+
+        let (lang_file, vision_file, lang_size, vision_size) = result.unwrap();
+        assert!(lang_file.ends_with(".gguf"));
+        assert!(vision_file.contains("mmproj") || vision_file.contains("vision"));
+        assert_ne!(lang_file, vision_file, "Should have separate files");
+        assert!(lang_size > 0);
+        assert!(vision_size > 0);
+    }
+
+    // Test bundled model info
+    #[test]
+    fn test_bundled_model_info() {
+        let info = get_bundled_model_info();
+        assert_eq!(info.id, "smolvlm2-2.2b-instruct");
+        assert!(info.model_file.ends_with(".gguf"));
+        assert!(info.mmproj_file.contains("mmproj"));
+        assert!(info.mmproj_file.ends_with(".gguf"));
+    }
+
+    // Test model info structure
+    #[test]
+    fn test_model_info_creation() {
+        let info = ModelInfo {
+            id: "test-model".to_string(),
+            name: "Test Model".to_string(),
+            model_file: "model.gguf".to_string(),
+            mmproj_file: "mmproj.gguf".to_string(),
+            downloaded: false,
+        };
+
+        assert_eq!(info.id, "test-model");
+        assert!(!info.downloaded);
+    }
+
+    // Test download progress structure
+    #[test]
+    fn test_download_progress_creation() {
+        let progress = DownloadProgress {
+            current: 100,
+            total: 1000,
+            percentage: 10.0,
+            file: "test.gguf".to_string(),
+        };
+
+        assert_eq!(progress.current, 100);
+        assert_eq!(progress.total, 1000);
+        assert_eq!(progress.percentage, 10.0);
     }
 }

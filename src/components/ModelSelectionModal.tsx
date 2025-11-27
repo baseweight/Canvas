@@ -184,7 +184,15 @@ export const ModelSelectionModal: React.FC<ModelSelectionModalProps> = ({
                         View on HuggingFace →
                       </a>
                       {isDownloaded ? (
-                        <span className="bw-model-downloaded">✓ Downloaded</span>
+                        <button
+                          className="bw-button-success"
+                          onClick={() => {
+                            onSelectModel(model.id);
+                            onClose();
+                          }}
+                        >
+                          Load Model
+                        </button>
                       ) : (
                         <button
                           className="bw-button-primary"

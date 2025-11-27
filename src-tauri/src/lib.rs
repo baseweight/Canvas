@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 mod llama_inference;
-mod model_manager;
+pub mod model_manager;
 pub mod inference_engine;
 mod audio_decoder;
 
@@ -73,6 +73,13 @@ async fn get_model_paths(model_id: String) -> Result<(String, String), String> {
             )
         })
         .map_err(|e| e.to_string())
+}
+
+// List all downloaded models
+#[tauri::command]
+async fn list_downloaded_models() -> Result<Vec<String>, String> {
+    let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    manager.list_downloaded_models().await.map_err(|e| e.to_string())
 }
 
 // Load the inference model
@@ -258,6 +265,7 @@ pub fn run() {
             download_bundled_model,
             download_model,
             get_model_paths,
+            list_downloaded_models,
             load_model,
             generate_response,
             check_audio_support,
