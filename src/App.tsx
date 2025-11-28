@@ -27,9 +27,10 @@ const BUNDLED_MODEL: Model = {
 };
 
 // Mock downloaded models (user-downloaded models would go here)
-const MOCK_DOWNLOADED_MODELS: Model[] = [
-  BUNDLED_MODEL, // Always include the bundled model
-];
+// Commented out to avoid unused variable error - can be re-enabled for testing
+// const MOCK_DOWNLOADED_MODELS: Model[] = [
+//   BUNDLED_MODEL, // Always include the bundled model
+// ];
 
 // Mock available models (for download) - Real models from HuggingFace collections
 const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
@@ -301,7 +302,8 @@ function App() {
         const mediaItem: MediaItem = {
           id: crypto.randomUUID(),
           type: 'audio',
-          url: filePath, // Store the file path for audio files
+          url: url, // Converted URL for display
+          filePath: filePath, // Original file path for backend inference
           filename,
           size: 0, // Size not available from file path
           createdAt: new Date(),
@@ -528,10 +530,11 @@ function App() {
 
       if (currentMedia.type === 'audio') {
         // Handle audio file
-        console.log('Calling inference with audio file:', currentMedia.url);
+        const audioPath = currentMedia.filePath || currentMedia.url;
+        console.log('Calling inference with audio file:', audioPath);
         response = await invoke<string>('generate_response_audio', {
           prompt: content,
-          audioPath: currentMedia.url,
+          audioPath: audioPath,
         });
       } else {
         // Handle image file

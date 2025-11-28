@@ -4,6 +4,7 @@ export interface MediaItem {
   id: string;
   type: 'image' | 'video' | 'audio';
   url: string;
+  filePath?: string; // Original file path for backend operations (audio)
   filename: string;
   size: number;
   dimensions?: {

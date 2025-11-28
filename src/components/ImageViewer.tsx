@@ -4,6 +4,7 @@ import type { NormalizedSelection } from '../types/selection';
 import { DropZone } from './DropZone';
 import { Toolbar, type ToolType } from './Toolbar';
 import { SelectionOverlay } from './SelectionOverlay';
+import AudioViewer from './AudioViewer';
 import './ImageViewer.css';
 
 interface ImageViewerProps {
@@ -98,7 +99,9 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop
 
   return (
     <div className="bw-image-viewer">
-      <Toolbar activeTool={activeTool} hasSelection={!!selection} onToolSelect={handleToolSelect} />
+      {mediaItem.type === 'image' && (
+        <Toolbar activeTool={activeTool} hasSelection={!!selection} onToolSelect={handleToolSelect} />
+      )}
       <div className="bw-image-viewer-content">
         <div className="bw-image-container">
           {mediaItem.type === 'image' ? (
@@ -116,22 +119,20 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop
                 onSelectionChange={handleSelectionChange}
               />
             </div>
-          ) : (
-            <video
-              src={mediaItem.url}
-              controls
-              className="bw-image"
-            />
-          )}
+          ) : mediaItem.type === 'audio' ? (
+            <AudioViewer url={mediaItem.url} filename={mediaItem.filename} />
+          ) : null}
         </div>
-        <div className="bw-image-info">
-          <span className="bw-image-filename">{mediaItem.filename}</span>
-          {mediaItem.dimensions && (
-            <span className="bw-image-dimensions">
-              {mediaItem.dimensions.width} × {mediaItem.dimensions.height}
-            </span>
-          )}
-        </div>
+        {mediaItem.type === 'image' && (
+          <div className="bw-image-info">
+            <span className="bw-image-filename">{mediaItem.filename}</span>
+            {mediaItem.dimensions && (
+              <span className="bw-image-dimensions">
+                {mediaItem.dimensions.width} × {mediaItem.dimensions.height}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
