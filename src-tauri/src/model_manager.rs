@@ -3,6 +3,8 @@
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use futures_util::StreamExt;
@@ -144,7 +146,11 @@ impl ModelManager {
         }
     }
 
-    pub async fn download_smolvlm2<F>(&self, progress_callback: F) -> Result<()>
+    pub async fn download_smolvlm2<F>(
+        &self,
+        progress_callback: F,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<()>
     where
         F: Fn(DownloadProgress) + Send + 'static,
     {
@@ -179,7 +185,7 @@ impl ModelManager {
                 continue;
             }
 
-            self.download_file(&url, &file_path, filename, &progress_callback).await?;
+            self.download_file(&url, &file_path, filename, &progress_callback, cancel_flag.clone()).await?;
         }
 
         Ok(())
@@ -211,16 +217,32 @@ impl ModelManager {
             Some("visual-question-answering") => true,
             Some("video-text-to-text") => true,
             _ => {
-                // Also check tags
-                model_info.tags.as_ref().map_or(false, |tags| {
+                // Also check tags (case-insensitive)
+                let has_multimodal_tag = model_info.tags.as_ref().map_or(false, |tags| {
                     tags.iter().any(|tag| {
-                        tag.contains("vision") ||
-                        tag.contains("multimodal") ||
-                        tag.contains("vlm") ||
-                        tag.contains("audio") ||
-                        tag.contains("image-text")
+                        let tag_lower = tag.to_lowercase();
+                        tag_lower.contains("vision") ||
+                        tag_lower.contains("multimodal") ||
+                        tag_lower.contains("vlm") ||
+                        tag_lower.contains("audio") ||
+                        tag_lower.contains("video") ||
+                        tag_lower.contains("image-text")
                     })
-                })
+                });
+
+                // Also check repo name for known indicators
+                let repo_lower = repo.to_lowercase();
+                let has_multimodal_name = repo_lower.contains("vlm") ||
+                    repo_lower.contains("vision") ||
+                    repo_lower.contains("video") ||
+                    repo_lower.contains("audio") ||
+                    repo_lower.contains("multimodal") ||
+                    repo_lower.contains("smolvlm") ||
+                    repo_lower.contains("pixtral") ||
+                    repo_lower.contains("ultravox") ||
+                    repo_lower.contains("moondream");
+
+                has_multimodal_tag || has_multimodal_name
             }
         };
 
@@ -241,6 +263,7 @@ impl ModelManager {
         destination: &Path,
         filename: &str,
         progress_callback: F,
+        cancel_flag: Arc<AtomicBool>,
     ) -> Result<()>
     where
         F: Fn(DownloadProgress),
@@ -268,6 +291,15 @@ impl ModelManager {
         let mut file = tokio::fs::File::create(destination).await?;
 
         while let Some(chunk) = stream.next().await {
+            // Check for cancellation
+            if cancel_flag.load(Ordering::SeqCst) {
+                drop(file); // Close file handle
+                // Delete partial file
+                let _ = tokio::fs::remove_file(destination).await;
+                println!("Download cancelled: {}", filename);
+                return Err(anyhow!("Download cancelled"));
+            }
+
             let chunk = chunk?;
             file.write_all(&chunk).await?;
 
@@ -292,7 +324,7 @@ impl ModelManager {
     }
 
     /// Validate and get model files from HuggingFace repository
-    pub async fn validate_huggingface_repo(&self, repo: &str) -> Result<(String, String, u64, u64)> {
+    pub async fn validate_huggingface_repo(&self, repo: &str, quantization: &str) -> Result<(String, String, u64, u64)> {
         // First, check if the model is actually multimodal via HF API
         self.verify_multimodal_model(repo).await?;
 
@@ -318,24 +350,27 @@ impl ModelManager {
 
                 if let Ok(manifest) = resp.json::<ManifestResponse>().await {
                     if let Some(language_file) = manifest.gguf_file {
-                        let vision_file = manifest.mmproj_file.unwrap_or_else(|| language_file.clone());
+                        // Check if this file matches the desired quantization
+                        if language_file.to_uppercase().contains(&quantization.to_uppercase()) {
+                            let vision_file = manifest.mmproj_file.unwrap_or_else(|| language_file.clone());
 
-                        // Get file sizes
-                        let lang_size = self.get_file_size(repo, &language_file).await?;
-                        let vision_size = if vision_file == language_file {
-                            0 // Unified model, don't count twice
-                        } else {
-                            self.get_file_size(repo, &vision_file).await?
-                        };
+                            // Get file sizes
+                            let lang_size = self.get_file_size(repo, &language_file).await?;
+                            let vision_size = if vision_file == language_file {
+                                0 // Unified model, don't count twice
+                            } else {
+                                self.get_file_size(repo, &vision_file).await?
+                            };
 
-                        return Ok((language_file, vision_file, lang_size, vision_size));
+                            return Ok((language_file, vision_file, lang_size, vision_size));
+                        }
                     }
                 }
             }
         }
 
-        // Fallback: scan for GGUF files
-        self.scan_repo_for_gguf(repo).await
+        // Fallback: scan for GGUF files with specific quantization
+        self.scan_repo_for_gguf(repo, quantization).await
     }
 
     async fn get_file_size(&self, repo: &str, filename: &str) -> Result<u64> {
@@ -351,7 +386,7 @@ impl ModelManager {
         }
     }
 
-    async fn scan_repo_for_gguf(&self, repo: &str) -> Result<(String, String, u64, u64)> {
+    async fn scan_repo_for_gguf(&self, repo: &str, quantization: &str) -> Result<(String, String, u64, u64)> {
         let api_url = format!("https://huggingface.co/api/models/{}/tree/main", repo);
         let client = reqwest::Client::new();
 
@@ -366,15 +401,18 @@ impl ModelManager {
 
         let mut language_file: Option<(String, u64)> = None;
         let mut vision_file: Option<(String, u64)> = None;
+        let quant_upper = quantization.to_uppercase();
 
         for file in files {
             let path = file.path.to_lowercase();
+            let path_upper = file.path.to_uppercase();
             let size = file.size.unwrap_or(0);
 
             if path.ends_with(".gguf") {
                 if path.contains("mmproj") || path.contains("vision") {
                     vision_file = Some((file.path, size));
-                } else if language_file.is_none() {
+                } else if language_file.is_none() && path_upper.contains(&quant_upper) {
+                    // Only select language files matching the desired quantization
                     language_file = Some((file.path, size));
                 }
             }
@@ -388,19 +426,25 @@ impl ModelManager {
                 // Unified model
                 Ok((lang.clone(), lang, lang_size, 0))
             }
-            _ => Err(anyhow!("No GGUF files found in repository")),
+            _ => Err(anyhow!("No GGUF files found in repository with quantization: {}", quantization)),
         }
     }
 
     /// Generic model download from HuggingFace
-    pub async fn download_from_huggingface<F>(&self, repo: &str, progress_callback: F) -> Result<()>
+    pub async fn download_from_huggingface<F>(
+        &self,
+        repo: &str,
+        quantization: &str,
+        progress_callback: F,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<()>
     where
         F: Fn(DownloadProgress) + Send + 'static,
     {
         self.ensure_models_directory().await?;
 
         // Validate and get file info
-        let (language_file, vision_file, lang_size, vision_size) = self.validate_huggingface_repo(repo).await?;
+        let (language_file, vision_file, lang_size, vision_size) = self.validate_huggingface_repo(repo, quantization).await?;
 
         let is_unified = language_file == vision_file;
         let model_id = repo.replace("/", "_").replace("-", "_").to_lowercase();
@@ -412,7 +456,7 @@ impl ModelManager {
         let lang_path = model_dir.join(&language_file);
 
         if !lang_path.exists() {
-            self.download_file(&lang_url, &lang_path, &language_file, &progress_callback).await?;
+            self.download_file(&lang_url, &lang_path, &language_file, &progress_callback, cancel_flag.clone()).await?;
         }
 
         // Download vision model if separate
@@ -421,7 +465,7 @@ impl ModelManager {
             let vision_path = model_dir.join(&vision_file);
 
             if !vision_path.exists() {
-                self.download_file(&vision_url, &vision_path, &vision_file, &progress_callback).await?;
+                self.download_file(&vision_url, &vision_path, &vision_file, &progress_callback, cancel_flag.clone()).await?;
             }
         }
 

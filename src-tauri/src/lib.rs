@@ -2,6 +2,8 @@ use tauri::{Manager, Emitter, State};
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri_plugin_dialog::DialogExt;
 use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use serde::{Deserialize, Serialize};
 
 mod llama_inference;
@@ -12,6 +14,9 @@ mod audio_decoder;
 use model_manager::{ModelManager, DownloadProgress};
 use inference_engine::{InferenceEngine, SharedInferenceEngine, create_shared_engine};
 use audio_decoder::decode_audio_file;
+
+// Download cancellation state
+pub type DownloadCancellation = Arc<AtomicBool>;
 
 // Chat message for conversation history
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,16 +49,33 @@ async fn get_models_directory() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+// Cancel ongoing download
+#[tauri::command]
+fn cancel_download(cancellation: State<'_, DownloadCancellation>) -> Result<(), String> {
+    cancellation.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
 // Download SmolVLM2 2.2B Instruct
 #[tauri::command]
-async fn download_bundled_model(app: tauri::AppHandle) -> Result<(), String> {
+async fn download_bundled_model(
+    app: tauri::AppHandle,
+    cancellation: State<'_, DownloadCancellation>,
+) -> Result<(), String> {
+    // Reset cancellation flag
+    cancellation.store(false, Ordering::SeqCst);
+
     let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    let cancel_flag = cancellation.inner().clone();
 
     manager
-        .download_smolvlm2(move |progress: DownloadProgress| {
-            // Emit progress to frontend
-            let _ = app.emit("download-progress", &progress);
-        })
+        .download_smolvlm2(
+            move |progress: DownloadProgress| {
+                // Emit progress to frontend
+                let _ = app.emit("download-progress", &progress);
+            },
+            cancel_flag,
+        )
         .await
         .map_err(|e| e.to_string())
 }
@@ -175,18 +197,29 @@ async fn check_audio_support(
 #[tauri::command]
 async fn download_model(
     repo: String,
+    quantization: String,
     app: tauri::AppHandle,
+    cancellation: State<'_, DownloadCancellation>,
 ) -> Result<String, String> {
+    // Reset cancellation flag
+    cancellation.store(false, Ordering::SeqCst);
+
     let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    let cancel_flag = cancellation.inner().clone();
 
     // Convert repo to model_id
     let model_id = repo.replace("/", "_").replace("-", "_").to_lowercase();
 
     manager
-        .download_from_huggingface(&repo, move |progress: DownloadProgress| {
-            // Emit progress to frontend
-            let _ = app.emit("download-progress", &progress);
-        })
+        .download_from_huggingface(
+            &repo,
+            &quantization,
+            move |progress: DownloadProgress| {
+                // Emit progress to frontend
+                let _ = app.emit("download-progress", &progress);
+            },
+            cancel_flag,
+        )
         .await
         .map_err(|e| e.to_string())?;
 
@@ -258,12 +291,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(create_shared_engine())
+        .manage(Arc::new(AtomicBool::new(false))) // Download cancellation flag
         .invoke_handler(tauri::generate_handler![
             greet,
             is_bundled_model_downloaded,
             get_models_directory,
             download_bundled_model,
             download_model,
+            cancel_download,
             get_model_paths,
             list_downloaded_models,
             load_model,

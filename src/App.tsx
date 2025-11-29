@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, ask } from "@tauri-apps/plugin-dialog";
@@ -173,6 +173,10 @@ interface DownloadProgress {
   file: string;
 }
 
+interface FileProgress {
+  [filename: string]: DownloadProgress;
+}
+
 function App() {
   const [currentMedia, setCurrentMedia] = useState<MediaItem | undefined>(undefined);
   const [currentModel, setCurrentModel] = useState<Model | undefined>(undefined);
@@ -180,11 +184,12 @@ function App() {
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [isDownloadDialogOpen, setIsDownloadDialogOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | undefined>(undefined);
+  const [fileProgress, setFileProgress] = useState<FileProgress>({});
   const [_isModelLoading, setIsModelLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAudioCapable, setIsAudioCapable] = useState(false);
   const [downloadedModels, setDownloadedModels] = useState<Model[]>([]);
+  const downloadCancelledRef = useRef(false);
 
   // Check if bundled model is downloaded on startup
   useEffect(() => {
@@ -209,7 +214,11 @@ function App() {
 
     // Listen for download progress events
     const unlisten = listen<DownloadProgress>('download-progress', (event) => {
-      setDownloadProgress(event.payload);
+      const progress = event.payload;
+      setFileProgress(prev => ({
+        ...prev,
+        [progress.file]: progress
+      }));
     });
 
     return () => {
@@ -633,36 +642,72 @@ function App() {
     const url = new URL(model.huggingfaceUrl);
     const pathParts = url.pathname.split('/');
     const repo = `${pathParts[1]}/${pathParts[2]}`; // org/repo
+    const quantization = model.quantization || 'Q4_K_M'; // Default to Q4_K_M if not specified
 
     try {
       setIsDownloading(true);
-      setDownloadProgress(undefined);
+      setFileProgress({}); // Clear previous download progress
+      setIsDownloadDialogOpen(true); // Show download dialog
+      setIsModelModalOpen(false); // Close model selection modal
+      downloadCancelledRef.current = false; // Reset cancel flag
 
-      // Call the download_model command
-      const downloadedModelId = await invoke<string>('download_model', { repo });
+      // Call the download_model command with quantization
+      const downloadedModelId = await invoke<string>('download_model', { repo, quantization });
 
       // Model download complete
       setIsDownloading(false);
-      setIsModelModalOpen(false);
+      setIsDownloadDialogOpen(false);
 
-      // Create the downloaded model object
-      const downloadedModel: Model = {
-        ...model,
-        id: downloadedModelId,
-        downloaded: true,
-      };
+      // Refresh the entire downloaded models list from backend
+      const modelIds = await invoke<string[]>('list_downloaded_models');
+      const models: Model[] = modelIds.map(modelId => {
+        // Check if it's the bundled model
+        if (modelId === BUNDLED_MODEL.id) {
+          return BUNDLED_MODEL;
+        }
 
-      // Add to downloaded models list
-      setDownloadedModels(prev => [...prev, downloadedModel]);
+        // Find in available models
+        const availableModel = MOCK_AVAILABLE_MODELS.find(m => m.id === modelId);
+        if (availableModel) {
+          return {
+            ...availableModel,
+            localPath: `/models/${modelId}`,
+            downloaded: true,
+          } as Model;
+        }
 
-      // Load the downloaded model
-      setCurrentModel(downloadedModel);
+        // Fallback for unknown models
+        return {
+          id: modelId,
+          name: modelId,
+          displayName: modelId,
+          task: 'general-vlm',
+          taskDescription: 'General Vision-Language Model',
+          backend: 'llama.cpp',
+          huggingfaceUrl: `https://huggingface.co/${modelId}`,
+          size: 0,
+          localPath: `/models/${modelId}`,
+          downloaded: true,
+        } as Model;
+      });
 
-      alert(`Model downloaded successfully!\nModel ID: ${downloadedModelId}`);
+      setDownloadedModels(models);
+
+      // Only load the model if download wasn't cancelled
+      if (!downloadCancelledRef.current) {
+        // Find and load the downloaded model
+        const downloadedModel = models.find(m => m.id === downloadedModelId);
+        if (downloadedModel) {
+          setCurrentModel(downloadedModel);
+        }
+
+        alert(`Model downloaded successfully!\nModel ID: ${downloadedModelId}`);
+      }
     } catch (error) {
       console.error('Failed to download model:', error);
       alert(`Failed to download model: ${error}`);
       setIsDownloading(false);
+      setIsDownloadDialogOpen(false);
     }
   };
 
@@ -684,7 +729,7 @@ function App() {
   const handleDownloadBundledModel = async () => {
     try {
       setIsDownloading(true);
-      setDownloadProgress(undefined);
+      setFileProgress({}); // Clear previous download progress
 
       await invoke('download_bundled_model');
 
@@ -700,9 +745,20 @@ function App() {
     }
   };
 
-  const handleCancelDownload = () => {
-    // User canceled download, close dialog and leave currentModel as undefined
+  const handleCancelDownload = async () => {
+    // User canceled download, close dialog and keep current model loaded
+    downloadCancelledRef.current = true;
+
+    try {
+      // Signal backend to cancel download
+      await invoke('cancel_download');
+    } catch (error) {
+      console.error('Failed to cancel download:', error);
+    }
+
     setIsDownloadDialogOpen(false);
+    setIsDownloading(false);
+    setFileProgress({});
   };
 
   return (
@@ -735,7 +791,7 @@ function App() {
         isOpen={isDownloadDialogOpen}
         onDownload={handleDownloadBundledModel}
         onCancel={handleCancelDownload}
-        progress={downloadProgress}
+        fileProgress={fileProgress}
         isDownloading={isDownloading}
       />
     </Layout>

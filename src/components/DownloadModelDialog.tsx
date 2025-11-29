@@ -8,11 +8,15 @@ interface DownloadProgress {
   file: string;
 }
 
+interface FileProgress {
+  [filename: string]: DownloadProgress;
+}
+
 interface DownloadModelDialogProps {
   isOpen: boolean;
   onDownload: () => void;
   onCancel: () => void;
-  progress?: DownloadProgress;
+  fileProgress: FileProgress;
   isDownloading: boolean;
 }
 
@@ -20,10 +24,13 @@ export const DownloadModelDialog: React.FC<DownloadModelDialogProps> = ({
   isOpen,
   onDownload,
   onCancel,
-  progress,
+  fileProgress,
   isDownloading,
 }) => {
   if (!isOpen) return null;
+
+  const files = Object.values(fileProgress);
+  const hasFiles = files.length > 0;
 
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -39,7 +46,7 @@ export const DownloadModelDialog: React.FC<DownloadModelDialogProps> = ({
       <div className="bw-modal bw-download-modal">
         <div className="bw-modal-header">
           <h2 className="bw-modal-title">
-            {isDownloading ? 'Downloading Model' : 'Download SmolVLM2 2.2B Instruct'}
+            {isDownloading ? 'Downloading Model...' : 'Download SmolVLM2 2.2B Instruct'}
           </h2>
         </div>
 
@@ -75,29 +82,31 @@ export const DownloadModelDialog: React.FC<DownloadModelDialogProps> = ({
             </div>
           ) : (
             <div className="bw-download-progress-container">
-              {progress && (
-                <>
-                  <div className="bw-download-file-info">
-                    <span className="bw-download-file-name">{progress.file}</span>
-                    <span className="bw-download-file-size">
-                      {formatBytes(progress.current)} / {formatBytes(progress.total)}
-                    </span>
-                  </div>
+              {hasFiles ? (
+                <div className="bw-download-files-list">
+                  {files.map((progress) => (
+                    <div key={progress.file} className="bw-download-file-item">
+                      <div className="bw-download-file-info">
+                        <span className="bw-download-file-name">{progress.file}</span>
+                        <span className="bw-download-file-size">
+                          {formatBytes(progress.current)} / {formatBytes(progress.total)}
+                        </span>
+                      </div>
 
-                  <div className="bw-download-progress-bar">
-                    <div
-                      className="bw-download-progress-fill"
-                      style={{ width: `${progress.percentage}%` }}
-                    />
-                  </div>
+                      <div className="bw-download-progress-bar">
+                        <div
+                          className="bw-download-progress-fill"
+                          style={{ width: `${progress.percentage}%` }}
+                        />
+                      </div>
 
-                  <div className="bw-download-percentage">
-                    {progress.percentage.toFixed(1)}%
-                  </div>
-                </>
-              )}
-
-              {!progress && (
+                      <div className="bw-download-percentage">
+                        {progress.percentage.toFixed(1)}%
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
                 <div className="bw-download-spinner">
                   <div className="bw-spinner"></div>
                   <p>Initializing download...</p>
@@ -126,9 +135,9 @@ export const DownloadModelDialog: React.FC<DownloadModelDialogProps> = ({
           ) : (
             <button
               className="bw-button-secondary"
-              disabled
+              onClick={onCancel}
             >
-              Downloading...
+              Cancel Download
             </button>
           )}
         </div>
