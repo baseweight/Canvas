@@ -1,7 +1,4 @@
-# Tauri + React + Typescript
+# Baseweight Canvas
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+Baseweight Canvas is a frontend to llama.cpp/mtmd that puts Vision and Audio modalities first, before chat.
 
-## Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
