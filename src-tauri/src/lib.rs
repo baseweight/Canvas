@@ -2,14 +2,21 @@ use tauri::{Manager, Emitter, State};
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri_plugin_dialog::DialogExt;
 use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use serde::{Deserialize, Serialize};
 
 mod llama_inference;
-mod model_manager;
+pub mod model_manager;
 pub mod inference_engine;
+mod audio_decoder;
 
 use model_manager::{ModelManager, DownloadProgress};
 use inference_engine::{InferenceEngine, SharedInferenceEngine, create_shared_engine};
+use audio_decoder::decode_audio_file;
+
+// Download cancellation state
+pub type DownloadCancellation = Arc<AtomicBool>;
 
 // Chat message for conversation history
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,16 +49,33 @@ async fn get_models_directory() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+// Cancel ongoing download
+#[tauri::command]
+fn cancel_download(cancellation: State<'_, DownloadCancellation>) -> Result<(), String> {
+    cancellation.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
 // Download SmolVLM2 2.2B Instruct
 #[tauri::command]
-async fn download_bundled_model(app: tauri::AppHandle) -> Result<(), String> {
+async fn download_bundled_model(
+    app: tauri::AppHandle,
+    cancellation: State<'_, DownloadCancellation>,
+) -> Result<(), String> {
+    // Reset cancellation flag
+    cancellation.store(false, Ordering::SeqCst);
+
     let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    let cancel_flag = cancellation.inner().clone();
 
     manager
-        .download_smolvlm2(move |progress: DownloadProgress| {
-            // Emit progress to frontend
-            let _ = app.emit("download-progress", &progress);
-        })
+        .download_smolvlm2(
+            move |progress: DownloadProgress| {
+                // Emit progress to frontend
+                let _ = app.emit("download-progress", &progress);
+            },
+            cancel_flag,
+        )
         .await
         .map_err(|e| e.to_string())
 }
@@ -71,6 +95,13 @@ async fn get_model_paths(model_id: String) -> Result<(String, String), String> {
             )
         })
         .map_err(|e| e.to_string())
+}
+
+// List all downloaded models
+#[tauri::command]
+async fn list_downloaded_models() -> Result<Vec<String>, String> {
+    let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    manager.list_downloaded_models().await.map_err(|e| e.to_string())
 }
 
 // Load the inference model
@@ -148,32 +179,155 @@ async fn generate_response(
     response.map_err(|e| e.to_string())
 }
 
+// Check if the current model supports audio
+#[tauri::command]
+async fn check_audio_support(
+    engine: State<'_, SharedInferenceEngine>,
+) -> Result<bool, String> {
+    let engine_lock = engine.lock().await;
+
+    if let Some(eng) = engine_lock.as_ref() {
+        Ok(eng.supports_audio())
+    } else {
+        Err("Model not loaded".to_string())
+    }
+}
+
+// Download a model from HuggingFace
+#[tauri::command]
+async fn download_model(
+    repo: String,
+    quantization: String,
+    app: tauri::AppHandle,
+    cancellation: State<'_, DownloadCancellation>,
+) -> Result<String, String> {
+    // Reset cancellation flag
+    cancellation.store(false, Ordering::SeqCst);
+
+    let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    let cancel_flag = cancellation.inner().clone();
+
+    // Convert repo to model_id
+    let model_id = repo.replace("/", "_").replace("-", "_").to_lowercase();
+
+    manager
+        .download_from_huggingface(
+            &repo,
+            &quantization,
+            move |progress: DownloadProgress| {
+                // Emit progress to frontend
+                let _ = app.emit("download-progress", &progress);
+            },
+            cancel_flag,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(model_id)
+}
+
+// Run inference with an audio file
+#[tauri::command]
+async fn generate_response_audio(
+    prompt: String,
+    audio_path: String,
+    engine: State<'_, SharedInferenceEngine>,
+) -> Result<String, String> {
+    println!("Generating response for audio file: {}", audio_path);
+
+    // Decode audio file
+    let audio_data = tokio::task::spawn_blocking(move || {
+        decode_audio_file(&audio_path)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| format!("Failed to decode audio: {}", e))?;
+
+    println!("Audio decoded: {} samples at {} Hz",
+             audio_data.samples.len(), audio_data.sample_rate);
+
+    // Take ownership of the engine temporarily
+    let mut engine_lock = engine.lock().await;
+    let mut engine_opt = engine_lock.take();
+
+    if engine_opt.is_none() {
+        return Err("Model not loaded".to_string());
+    }
+
+    // Get the expected sample rate from the model
+    let target_sample_rate = engine_opt.as_ref().unwrap().get_audio_sample_rate() as u32;
+    println!("Model expects audio at {} Hz", target_sample_rate);
+
+    // Drop the lock before the blocking operation
+    drop(engine_lock);
+
+    // Resample audio if needed and run inference in a blocking task
+    let (response, engine_instance) = tokio::task::spawn_blocking(move || {
+        let mut eng = engine_opt.take().unwrap();
+
+        // Resample audio to target sample rate
+        use crate::audio_decoder::resample;
+        let resampled_samples = resample(&audio_data.samples, audio_data.sample_rate, target_sample_rate);
+        println!("Resampled from {} Hz to {} Hz: {} -> {} samples",
+                 audio_data.sample_rate, target_sample_rate,
+                 audio_data.samples.len(), resampled_samples.len());
+
+        let result = eng.generate_with_audio(&prompt, &resampled_samples);
+        (result, eng)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+
+    // Put the engine back
+    let mut engine_lock = engine.lock().await;
+    *engine_lock = Some(engine_instance);
+
+    response.map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(create_shared_engine())
+        .manage(Arc::new(AtomicBool::new(false))) // Download cancellation flag
         .invoke_handler(tauri::generate_handler![
             greet,
             is_bundled_model_downloaded,
             get_models_directory,
             download_bundled_model,
+            download_model,
+            cancel_download,
             get_model_paths,
+            list_downloaded_models,
             load_model,
-            generate_response
+            generate_response,
+            check_audio_support,
+            generate_response_audio
         ])
         .setup(|app| {
-            // Create menu for main window only
+            // Create menu
             let open_item = MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?;
             let file_menu = Submenu::with_items(app, "File", true, &[&open_item])?;
-            let menu = Menu::with_items(app, &[&file_menu])?;
 
             let splash_window = app.get_webview_window("splash").unwrap();
             let main_window = app.get_webview_window("main").unwrap();
 
-            // Set menu only on main window
-            main_window.set_menu(menu)?;
+            // Set menu at app level for macOS, window level for other platforms
+            #[cfg(target_os = "macos")]
+            {
+                // On macOS, create app menu + file menu
+                let app_menu = Submenu::new(app, "", true)?;
+                let menu = Menu::with_items(app, &[&app_menu, &file_menu])?;
+                app.set_menu(menu)?;
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                let menu = Menu::with_items(app, &[&file_menu])?;
+                main_window.set_menu(menu)?;
+            }
 
             // Clone the windows for the async block
             let splash = splash_window.clone();
@@ -197,18 +351,19 @@ pub fn run() {
             if event.id() == "open" {
                 println!("Open menu clicked");
                 let app_handle = app.clone();
+
+                // No filters - show all files
                 app.dialog()
                     .file()
-                    .add_filter("Images", &["png", "jpg", "jpeg", "gif", "bmp", "webp"])
                     .pick_file(move |file_path| {
-                        println!("File picker callback - file_path: {:?}", file_path);
-                        if let Some(path) = file_path {
-                            let path_str = path.to_string();
-                            println!("Emitting file-opened event with path: {}", path_str);
-                            let result = app_handle.emit("file-opened", path_str);
-                            println!("Emit result: {:?}", result);
-                        }
-                    });
+                    println!("File picker callback - file_path: {:?}", file_path);
+                    if let Some(path) = file_path {
+                        let path_str = path.to_string();
+                        println!("Emitting file-opened event with path: {}", path_str);
+                        let result = app_handle.emit("file-opened", path_str);
+                        println!("Emit result: {:?}", result);
+                    }
+                });
             }
         })
         .run(tauri::generate_context!())

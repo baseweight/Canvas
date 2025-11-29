@@ -2,8 +2,9 @@
 
 export interface MediaItem {
   id: string;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'audio';
   url: string;
+  filePath?: string; // Original file path for backend operations (audio)
   filename: string;
   size: number;
   dimensions?: {
@@ -16,6 +17,7 @@ export interface MediaItem {
 
 export type ModelTask =
   | 'general-vlm'      // General purpose vision-language model
+  | 'audio-llm'        // Audio-capable language model
   | 'ocr'              // Optical character recognition
   | 'classifier'       // Content classification (e.g., NSFW detection)
   | 'captioning'       // Image captioning

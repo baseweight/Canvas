@@ -7,6 +7,8 @@ interface ChatPanelProps {
   messages: ChatMessage[];
   onChangeModel: () => void;
   onSendMessage: (message: string) => void;
+  isAudioCapable?: boolean;
+  isGenerating?: boolean;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -14,6 +16,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   messages,
   onChangeModel,
   onSendMessage,
+  isAudioCapable = false,
+  isGenerating = false,
 }) => {
   const [inputValue, setInputValue] = useState('');
 
@@ -49,7 +53,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           <label className="bw-chat-label">Task</label>
           {currentModel ? (
             <div className="bw-chat-task-info">
-              <span className="bw-chat-task-name">{currentModel.taskDescription}</span>
+              <span className={`bw-chat-task-badge ${isAudioCapable ? 'bw-chat-task-badge--audio' : 'bw-chat-task-badge--vision'}`}>
+                {isAudioCapable ? 'Audio Capable Language Model' : 'General Vision-Language Model'}
+              </span>
             </div>
           ) : (
             <div className="bw-chat-model-empty">-</div>
@@ -64,7 +70,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <>
                 <p>No messages yet</p>
                 <p className="bw-chat-empty-hint">
-                  {currentModel.taskDescription}
+                  {isAudioCapable ? 'Audio Capable Language Model' : 'General Vision-Language Model'}
                 </p>
               </>
             ) : (
@@ -77,19 +83,35 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             )}
           </div>
         ) : (
-          messages.map(message => (
-            <div
-              key={message.id}
-              className={`bw-chat-message bw-chat-message--${message.role}`}
-            >
-              <div className="bw-chat-message-role">
-                {message.role === 'user' ? 'You' : currentModel?.displayName || 'Assistant'}
+          <>
+            {messages.map(message => (
+              <div
+                key={message.id}
+                className={`bw-chat-message bw-chat-message--${message.role}`}
+              >
+                <div className="bw-chat-message-role">
+                  {message.role === 'user' ? 'You' : currentModel?.displayName || 'Assistant'}
+                </div>
+                <div className="bw-chat-message-content">
+                  {message.content}
+                </div>
               </div>
-              <div className="bw-chat-message-content">
-                {message.content}
+            ))}
+            {isGenerating && (
+              <div className="bw-chat-message bw-chat-message--assistant bw-chat-message--loading">
+                <div className="bw-chat-message-role">
+                  {currentModel?.displayName || 'Assistant'}
+                </div>
+                <div className="bw-chat-message-content">
+                  <div className="bw-chat-loading">
+                    <span className="bw-chat-loading-dot"></span>
+                    <span className="bw-chat-loading-dot"></span>
+                    <span className="bw-chat-loading-dot"></span>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))
+            )}
+          </>
         )}
       </div>
 

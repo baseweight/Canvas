@@ -90,6 +90,25 @@
   color: #e0e0e0;
 }
 
+.bw-chat-task-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 4px;
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.bw-chat-task-badge--vision {
+  background-color: #22c55e; /* Green */
+}
+
+.bw-chat-task-badge--audio {
+  background-color: #a855f7; /* Purple */
+}
+
 .bw-chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -210,4 +229,39 @@
   background-color: #3e3e3e;
   color: #808080;
   cursor: not-allowed;
+}
+
+/* Loading indicator */
+.bw-chat-loading {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.bw-chat-loading-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #0066ff;
+  animation: bw-loading-pulse 1.4s infinite ease-in-out both;
+}
+
+.bw-chat-loading-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.bw-chat-loading-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes bw-loading-pulse {
+  0%, 80%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
