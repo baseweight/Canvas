@@ -307,16 +307,27 @@ pub fn run() {
             generate_response_audio
         ])
         .setup(|app| {
-            // Create menu for main window only
+            // Create menu
             let open_item = MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?;
             let file_menu = Submenu::with_items(app, "File", true, &[&open_item])?;
-            let menu = Menu::with_items(app, &[&file_menu])?;
 
             let splash_window = app.get_webview_window("splash").unwrap();
             let main_window = app.get_webview_window("main").unwrap();
 
-            // Set menu only on main window
-            main_window.set_menu(menu)?;
+            // Set menu at app level for macOS, window level for other platforms
+            #[cfg(target_os = "macos")]
+            {
+                // On macOS, create app menu + file menu
+                let app_menu = Submenu::new(app, "", true)?;
+                let menu = Menu::with_items(app, &[&app_menu, &file_menu])?;
+                app.set_menu(menu)?;
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                let menu = Menu::with_items(app, &[&file_menu])?;
+                main_window.set_menu(menu)?;
+            }
 
             // Clone the windows for the async block
             let splash = splash_window.clone();
