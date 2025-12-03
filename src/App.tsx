@@ -711,19 +711,77 @@ function App() {
     }
   };
 
-  const handleAddModel = (repo: string, quantization: string) => {
+  const handleAddModel = async (repo: string, quantization: string) => {
     console.log('Add model from HuggingFace:', repo, quantization);
-    // TODO: Implement actual HuggingFace download logic
-    alert(
-      `Add Model from HuggingFace\n\n` +
-      `Repository: ${repo}\n` +
-      `Quantization: ${quantization}\n\n` +
-      `This will be implemented with the Rust backend:\n` +
-      `1. Fetch model card from HuggingFace\n` +
-      `2. Locate mmproj-*.gguf and model-${quantization.toLowerCase()}.gguf\n` +
-      `3. Download both files\n` +
-      `4. Add to downloaded models list`
-    );
+
+    try {
+      setIsDownloading(true);
+      setFileProgress({}); // Clear previous download progress
+      setIsDownloadDialogOpen(true); // Show download dialog
+      setIsModelModalOpen(false); // Close model selection modal
+      downloadCancelledRef.current = false; // Reset cancel flag
+
+      // Call the download_model command with quantization
+      const downloadedModelId = await invoke<string>('download_model', { repo, quantization });
+
+      // Model download complete
+      setIsDownloading(false);
+      setIsDownloadDialogOpen(false);
+
+      // Refresh the entire downloaded models list from backend
+      const modelIds = await invoke<string[]>('list_downloaded_models');
+      const models: Model[] = modelIds.map(modelId => {
+        // Check if it's the bundled model
+        if (modelId === BUNDLED_MODEL.id) {
+          return BUNDLED_MODEL;
+        }
+
+        // Find in available models
+        const availableModel = MOCK_AVAILABLE_MODELS.find(m => m.id === modelId);
+        if (availableModel) {
+          return {
+            ...availableModel,
+            localPath: `/models/${modelId}`,
+            downloaded: true,
+          } as Model;
+        }
+
+        // Fallback for unknown models (custom models added via "Add Model")
+        return {
+          id: modelId,
+          name: modelId,
+          displayName: modelId.split('_').map(word =>
+            word.charAt(0).toUpperCase() + word.slice(1)
+          ).join(' '),
+          task: 'general-vlm',
+          taskDescription: 'General Vision-Language Model',
+          backend: 'llama.cpp',
+          huggingfaceUrl: `https://huggingface.co/${repo}`,
+          size: 0,
+          localPath: `/models/${modelId}`,
+          downloaded: true,
+          quantization: quantization,
+        } as Model;
+      });
+
+      setDownloadedModels(models);
+
+      // Only load the model if download wasn't cancelled
+      if (!downloadCancelledRef.current) {
+        // Find and load the downloaded model
+        const downloadedModel = models.find(m => m.id === downloadedModelId);
+        if (downloadedModel) {
+          setCurrentModel(downloadedModel);
+        }
+
+        alert(`Model downloaded successfully!\nModel ID: ${downloadedModelId}`);
+      }
+    } catch (error) {
+      console.error('Failed to download model:', error);
+      alert(`Failed to download model: ${error}`);
+      setIsDownloading(false);
+      setIsDownloadDialogOpen(false);
+    }
   };
 
   const handleDownloadBundledModel = async () => {

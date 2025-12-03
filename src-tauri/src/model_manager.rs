@@ -240,7 +240,11 @@ impl ModelManager {
                     repo_lower.contains("smolvlm") ||
                     repo_lower.contains("pixtral") ||
                     repo_lower.contains("ultravox") ||
-                    repo_lower.contains("moondream");
+                    repo_lower.contains("moondream") ||
+                    repo_lower.contains("ministral") ||
+                    repo_lower.contains("llava") ||
+                    repo_lower.contains("qwen") ||
+                    repo_lower.contains("internvl");
 
                 has_multimodal_tag || has_multimodal_name
             }
