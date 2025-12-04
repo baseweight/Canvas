@@ -34,7 +34,7 @@ const BUNDLED_MODEL: Model = {
 
 // Mock available models (for download) - Real models from HuggingFace collections
 const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
-  // Popular SmolVLM2 models (HuggingFace)
+  // SmolVLM2 2.2B Instruct - Best compact vision-language model
   {
     id: 'smolvlm2-2.2b-instruct',
     name: 'SmolVLM2-2.2B-Instruct-GGUF',
@@ -47,72 +47,8 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     quantization: 'Q4_K_M',
     description: 'Popular compact vision-language model from HuggingFace, excellent quality-to-size ratio',
   },
-  {
-    id: 'ggml_org_smolvlm2_500m_video_instruct_gguf',
-    name: 'SmolVLM2-500M-Video-Instruct-GGUF',
-    displayName: 'SmolVLM2 500M Video',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF',
-    size: 0.3 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'Tiny video-capable vision model, supports both images and video frames',
-  },
 
-  // PaliGemma (Google vision-language)
-  {
-    id: 'paligemma-3b',
-    name: 'paligemma-3b-mix-224-gguf',
-    displayName: 'PaliGemma 3B',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/abetlen/paligemma-3b-mix-224-gguf',
-    size: 2.5 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'Google\'s vision-language model based on Gemma, strong OCR and visual reasoning',
-  },
-
-  // ggml-org multimodal models
-  {
-    id: 'mistral-small-3.1-24b',
-    name: 'Mistral-Small-3.1-24B-Instruct-2503-GGUF',
-    displayName: 'Mistral Small 3.1 24B Instruct',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/ggml-org/Mistral-Small-3.1-24B-Instruct-2503-GGUF',
-    size: 14 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'Powerful 24B parameter vision-language model with strong instruction following',
-  },
-  {
-    id: 'pixtral-12b',
-    name: 'pixtral-12b-GGUF',
-    displayName: 'Pixtral 12B',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/ggml-org/pixtral-12b-GGUF',
-    size: 7 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'High-performance 12B vision model from Mistral AI',
-  },
-  {
-    id: 'moondream2-2025',
-    name: 'moondream2-20250414-GGUF',
-    displayName: 'Moondream 2 (2025)',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/ggml-org/moondream2-20250414-GGUF',
-    size: 0.3 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'Ultra-compact 500M parameter vision model, perfect for edge devices',
-  },
-
-  // Audio models
+  // Ultravox - Audio-capable language model
   {
     id: 'ggml_org_ultravox_v0_5_llama_3_2_1b_gguf',
     name: 'ultravox-v0_5-llama-3_2-1b-GGUF',
@@ -126,31 +62,7 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     description: 'Audio-capable language model based on Llama 3.2, supports speech understanding',
   },
 
-  // LiquidAI LFM2-VL models
-  {
-    id: 'lfm2-vl-3b',
-    name: 'LFM2-VL-3B-GGUF',
-    displayName: 'LFM2-VL 3B',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/LiquidAI/LFM2-VL-3B-GGUF',
-    size: 2 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'On-device optimized 3B vision-language model from Liquid AI',
-  },
-  {
-    id: 'lfm2-vl-1.6b',
-    name: 'LFM2-VL-1.6B-GGUF',
-    displayName: 'LFM2-VL 1.6B',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/LiquidAI/LFM2-VL-1.6B-GGUF',
-    size: 1 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'Efficient 1.6B model designed for on-device deployment',
-  },
+  // LFM2-VL 450M - Ultra-lightweight vision model
   {
     id: 'lfm2-vl-450m',
     name: 'LFM2-VL-450M-GGUF',
@@ -160,8 +72,22 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     backend: 'llama.cpp',
     huggingfaceUrl: 'https://huggingface.co/LiquidAI/LFM2-VL-450M-GGUF',
     size: 0.3 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
+    quantization: 'Q4_0',
     description: 'Ultra-lightweight 450M model for resource-constrained environments',
+  },
+
+  // Ministral 3 14B - Mistral's latest vision model
+  {
+    id: 'mistralai_ministral_3_14b_instruct_2512_gguf',
+    name: 'Ministral-3-14B-Instruct-2512-GGUF',
+    displayName: 'Ministral 3 14B Instruct',
+    task: 'general-vlm',
+    taskDescription: 'General Vision-Language Model',
+    backend: 'llama.cpp',
+    huggingfaceUrl: 'https://huggingface.co/mistralai/Ministral-3-14B-Instruct-2512-GGUF',
+    size: 8.5 * 1024 * 1024 * 1024,
+    quantization: 'Q4_K_M (BF16 mmproj)',
+    description: 'Mistral\'s latest 14B vision-language model with unified architecture and strong performance',
   },
 
 ];

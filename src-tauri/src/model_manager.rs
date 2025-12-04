@@ -39,7 +39,7 @@ pub fn get_bundled_model_info() -> ModelInfo {
 }
 
 pub struct ModelManager {
-    models_dir: PathBuf,
+    pub models_dir: PathBuf,
 }
 
 impl ModelManager {
@@ -119,22 +119,32 @@ impl ModelManager {
 
         // Find GGUF files in directory
         let mut language_file: Option<PathBuf> = None;
-        let mut mmproj_file: Option<PathBuf> = None;
+        let mut mmproj_file_f16: Option<PathBuf> = None;
+        let mut mmproj_file_other: Option<PathBuf> = None;
 
         let mut entries = tokio::fs::read_dir(&model_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if let Some(filename) = path.file_name() {
                 let filename_str = filename.to_string_lossy();
+                let filename_upper = filename_str.to_uppercase();
                 if filename_str.ends_with(".gguf") {
                     if filename_str.contains("mmproj") || filename_str.contains("vision") {
-                        mmproj_file = Some(path.clone());
+                        // Prefer F16 mmproj files
+                        if filename_upper.contains("F16") || filename_upper.contains("_F16") {
+                            mmproj_file_f16 = Some(path.clone());
+                        } else if mmproj_file_other.is_none() {
+                            mmproj_file_other = Some(path.clone());
+                        }
                     } else if language_file.is_none() {
                         language_file = Some(path.clone());
                     }
                 }
             }
         }
+
+        // Prefer F16 mmproj if available, otherwise use other quantization
+        let mmproj_file = mmproj_file_f16.or(mmproj_file_other);
 
         match (language_file, mmproj_file) {
             (Some(lang), Some(mmproj)) => Ok((lang, mmproj)),
@@ -191,74 +201,57 @@ impl ModelManager {
         Ok(())
     }
 
-    /// Verify that a model is multimodal by checking HuggingFace API metadata
-    async fn verify_multimodal_model(&self, repo: &str) -> Result<()> {
-        let api_url = format!("https://huggingface.co/api/models/{}", repo);
-        let client = reqwest::Client::new();
+    /// Verify that downloaded model files are actually multimodal
+    /// This is done by loading them with mtmd and checking the GGUF metadata
+    pub async fn verify_downloaded_model(&self, model_id: &str) -> Result<(bool, bool)> {
+        use crate::llama_inference::LlamaInference;
 
-        #[derive(Deserialize)]
-        struct ModelInfo {
-            pipeline_tag: Option<String>,
-            tags: Option<Vec<String>>,
-        }
+        let model_dir = self.models_dir.join(model_id);
 
-        let response = client.get(&api_url).send().await?;
+        // Find the main model file and potential mmproj file
+        let mut language_file: Option<std::path::PathBuf> = None;
+        let mut mmproj_file_f16: Option<std::path::PathBuf> = None;
+        let mut mmproj_file_other: Option<std::path::PathBuf> = None;
 
-        if !response.status().is_success() {
-            return Err(anyhow!("Failed to fetch model info from HuggingFace API"));
-        }
-
-        let model_info: ModelInfo = response.json().await?;
-
-        // Check if it's a multimodal model
-        let is_multimodal = match model_info.pipeline_tag.as_deref() {
-            Some("image-text-to-text") => true,
-            Some("audio-text-to-text") => true,
-            Some("visual-question-answering") => true,
-            Some("video-text-to-text") => true,
-            _ => {
-                // Also check tags (case-insensitive)
-                let has_multimodal_tag = model_info.tags.as_ref().map_or(false, |tags| {
-                    tags.iter().any(|tag| {
-                        let tag_lower = tag.to_lowercase();
-                        tag_lower.contains("vision") ||
-                        tag_lower.contains("multimodal") ||
-                        tag_lower.contains("vlm") ||
-                        tag_lower.contains("audio") ||
-                        tag_lower.contains("video") ||
-                        tag_lower.contains("image-text")
-                    })
-                });
-
-                // Also check repo name for known indicators
-                let repo_lower = repo.to_lowercase();
-                let has_multimodal_name = repo_lower.contains("vlm") ||
-                    repo_lower.contains("vision") ||
-                    repo_lower.contains("video") ||
-                    repo_lower.contains("audio") ||
-                    repo_lower.contains("multimodal") ||
-                    repo_lower.contains("smolvlm") ||
-                    repo_lower.contains("pixtral") ||
-                    repo_lower.contains("ultravox") ||
-                    repo_lower.contains("moondream") ||
-                    repo_lower.contains("ministral") ||
-                    repo_lower.contains("llava") ||
-                    repo_lower.contains("qwen") ||
-                    repo_lower.contains("internvl");
-
-                has_multimodal_tag || has_multimodal_name
+        let mut entries = tokio::fs::read_dir(&model_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if let Some(filename) = path.file_name() {
+                let filename_str = filename.to_string_lossy();
+                let filename_upper = filename_str.to_uppercase();
+                if filename_str.ends_with(".gguf") {
+                    if filename_str.contains("mmproj") || filename_str.contains("vision") {
+                        // Prefer F16 mmproj files
+                        if filename_upper.contains("F16") || filename_upper.contains("_F16") {
+                            mmproj_file_f16 = Some(path.clone());
+                        } else if mmproj_file_other.is_none() {
+                            mmproj_file_other = Some(path.clone());
+                        }
+                    } else if language_file.is_none() {
+                        language_file = Some(path.clone());
+                    }
+                }
             }
-        };
-
-        if !is_multimodal {
-            return Err(anyhow!(
-                "Model '{}' does not appear to be a multimodal (vision/audio) model. \
-                Baseweight Canvas requires vision-language or audio models with mmproj support.",
-                repo
-            ));
         }
 
-        Ok(())
+        let lang_path = language_file.ok_or_else(|| anyhow!("No GGUF model file found"))?;
+
+        // Prefer F16 mmproj if available, otherwise use other quantization
+        let mmproj_file = mmproj_file_f16.or(mmproj_file_other);
+
+        // Try mmproj file first, fall back to language file for unified models
+        let mmproj_path = mmproj_file.as_ref().unwrap_or(&lang_path);
+
+        // Check multimodal support by actually loading the model
+        // Run in blocking task to avoid blocking the async runtime
+        let lang_path_str = lang_path.to_str().unwrap().to_string();
+        let mmproj_path_str = mmproj_path.to_str().unwrap().to_string();
+
+        tokio::task::spawn_blocking(move || {
+            LlamaInference::check_multimodal_support(&lang_path_str, &mmproj_path_str)
+        })
+        .await
+        .map_err(|e| anyhow!("Verification task failed: {}", e))?
     }
 
     async fn download_file<F>(
@@ -329,9 +322,6 @@ impl ModelManager {
 
     /// Validate and get model files from HuggingFace repository
     pub async fn validate_huggingface_repo(&self, repo: &str, quantization: &str) -> Result<(String, String, u64, u64)> {
-        // First, check if the model is actually multimodal via HF API
-        self.verify_multimodal_model(repo).await?;
-
         // Try manifest API first (supports unified models)
         let manifest_url = format!("https://huggingface.co/v2/{}/manifests/latest", repo);
         let client = reqwest::Client::new();
@@ -354,8 +344,10 @@ impl ModelManager {
 
                 if let Ok(manifest) = resp.json::<ManifestResponse>().await {
                     if let Some(language_file) = manifest.gguf_file {
+                        // Strip any suffix like "(F16 mmproj)" from quantization string
+                        let clean_quant = quantization.split('(').next().unwrap_or(quantization).trim();
                         // Check if this file matches the desired quantization
-                        if language_file.to_uppercase().contains(&quantization.to_uppercase()) {
+                        if language_file.to_uppercase().contains(&clean_quant.to_uppercase()) {
                             let vision_file = manifest.mmproj_file.unwrap_or_else(|| language_file.clone());
 
                             // Get file sizes
@@ -404,8 +396,12 @@ impl ModelManager {
         let files: Vec<FileInfo> = response.json().await?;
 
         let mut language_file: Option<(String, u64)> = None;
-        let mut vision_file: Option<(String, u64)> = None;
-        let quant_upper = quantization.to_uppercase();
+        let mut vision_file_f16: Option<(String, u64)> = None;
+        let mut vision_file_other: Option<(String, u64)> = None;
+
+        // Strip any suffix like "(F16 mmproj)" from quantization string
+        let clean_quant = quantization.split('(').next().unwrap_or(quantization).trim();
+        let quant_upper = clean_quant.to_uppercase();
 
         for file in files {
             let path = file.path.to_lowercase();
@@ -414,13 +410,21 @@ impl ModelManager {
 
             if path.ends_with(".gguf") {
                 if path.contains("mmproj") || path.contains("vision") {
-                    vision_file = Some((file.path, size));
+                    // Prefer F16 mmproj files, but keep track of other quantizations
+                    if path_upper.contains("F16") || path_upper.contains("_F16") {
+                        vision_file_f16 = Some((file.path, size));
+                    } else if vision_file_other.is_none() {
+                        vision_file_other = Some((file.path, size));
+                    }
                 } else if language_file.is_none() && path_upper.contains(&quant_upper) {
                     // Only select language files matching the desired quantization
                     language_file = Some((file.path, size));
                 }
             }
         }
+
+        // Prefer F16 mmproj if available, otherwise use other quantization
+        let vision_file = vision_file_f16.or(vision_file_other);
 
         match (language_file, vision_file) {
             (Some((lang, lang_size)), Some((vis, vis_size))) => {
@@ -472,6 +476,8 @@ impl ModelManager {
                 self.download_file(&vision_url, &vision_path, &vision_file, &progress_callback, cancel_flag.clone()).await?;
             }
         }
+
+        println!("Model downloaded successfully");
 
         Ok(())
     }
@@ -528,42 +534,11 @@ mod tests {
     // Run with: cargo test -- --ignored --test-threads=1
     #[tokio::test]
     #[ignore]
-    async fn test_verify_multimodal_model_valid_vision() {
-        let manager = ModelManager::new().unwrap();
-
-        // Test with SmolVLM2 (known vision model)
-        let result = manager.verify_multimodal_model("ggml-org/SmolVLM2-2.2B-Instruct-GGUF").await;
-        assert!(result.is_ok(), "SmolVLM2 should be recognized as multimodal");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_verify_multimodal_model_valid_audio() {
-        let manager = ModelManager::new().unwrap();
-
-        // Test with Ultravox (known audio model)
-        let result = manager.verify_multimodal_model("ggml-org/ultravox-v0_5-llama-3_2-1b-GGUF").await;
-        assert!(result.is_ok(), "Ultravox should be recognized as multimodal");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_verify_multimodal_model_invalid_text_only() {
-        let manager = ModelManager::new().unwrap();
-
-        // Test with a text-only model (should fail)
-        let result = manager.verify_multimodal_model("meta-llama/Llama-2-7b-hf").await;
-        assert!(result.is_err(), "Text-only Llama model should be rejected");
-        assert!(result.unwrap_err().to_string().contains("multimodal"));
-    }
-
-    #[tokio::test]
-    #[ignore]
     async fn test_validate_huggingface_repo_valid() {
         let manager = ModelManager::new().unwrap();
 
         // Test with SmolVLM2
-        let result = manager.validate_huggingface_repo("ggml-org/SmolVLM2-2.2B-Instruct-GGUF").await;
+        let result = manager.validate_huggingface_repo("ggml-org/SmolVLM2-2.2B-Instruct-GGUF", "Q4_K_M").await;
         assert!(result.is_ok());
 
         let (lang_file, vision_file, lang_size, vision_size) = result.unwrap();
@@ -578,7 +553,7 @@ mod tests {
         let manager = ModelManager::new().unwrap();
 
         // Test with non-existent repo
-        let result = manager.validate_huggingface_repo("nonexistent/fake-model-12345").await;
+        let result = manager.validate_huggingface_repo("nonexistent/fake-model-12345", "Q4_K_M").await;
         assert!(result.is_err());
     }
 
@@ -588,7 +563,7 @@ mod tests {
         let manager = ModelManager::new().unwrap();
 
         // Test scanning a real repo with separate mmproj file
-        let result = manager.scan_repo_for_gguf("ggml-org/SmolVLM2-2.2B-Instruct-GGUF").await;
+        let result = manager.scan_repo_for_gguf("ggml-org/SmolVLM2-2.2B-Instruct-GGUF", "Q4_K_M").await;
         assert!(result.is_ok());
 
         let (lang_file, vision_file, lang_size, vision_size) = result.unwrap();
@@ -637,5 +612,168 @@ mod tests {
         assert_eq!(progress.current, 100);
         assert_eq!(progress.total, 1000);
         assert_eq!(progress.percentage, 10.0);
+    }
+
+    // Tests for verify_downloaded_model
+    #[tokio::test]
+    #[ignore] // Requires actual downloaded model
+    async fn test_verify_downloaded_model_vision() {
+        let manager = ModelManager::new().unwrap();
+
+        // Test with SmolVLM2 if it exists
+        let model_id = "smolvlm2-2.2b-instruct";
+        let model_dir = manager.models_dir.join(model_id);
+
+        if !model_dir.exists() {
+            eprintln!("Skipping test - model not downloaded: {}", model_id);
+            return;
+        }
+
+        let result = manager.verify_downloaded_model(model_id).await;
+
+        assert!(result.is_ok(), "Should successfully verify SmolVLM2");
+        let (supports_vision, supports_audio) = result.unwrap();
+        assert!(supports_vision, "SmolVLM2 should support vision");
+        assert!(!supports_audio, "SmolVLM2 should not support audio");
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires actual downloaded model
+    async fn test_verify_downloaded_model_unified() {
+        let manager = ModelManager::new().unwrap();
+
+        // Look for any unified model (single GGUF file with embedded vision)
+        let mut unified_model_id: Option<String> = None;
+
+        if let Ok(entries) = tokio::fs::read_dir(&manager.models_dir).await {
+            let mut entries = entries;
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if let Ok(file_type) = entry.file_type().await {
+                    if file_type.is_dir() {
+                        if let Some(model_id) = entry.file_name().to_str() {
+                            let model_path = manager.models_dir.join(model_id);
+
+                            // Check if this directory has a single GGUF file (unified model)
+                            let mut has_main_gguf = false;
+                            let mut has_mmproj = false;
+
+                            if let Ok(files) = tokio::fs::read_dir(&model_path).await {
+                                let mut files = files;
+                                while let Ok(Some(file)) = files.next_entry().await {
+                                    if let Some(filename) = file.file_name().to_str() {
+                                        if filename.ends_with(".gguf") {
+                                            if filename.contains("mmproj") || filename.contains("vision") {
+                                                has_mmproj = true;
+                                            } else {
+                                                has_main_gguf = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Unified model has main GGUF but no separate mmproj
+                            if has_main_gguf && !has_mmproj {
+                                unified_model_id = Some(model_id.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(model_id) = unified_model_id {
+            println!("Testing unified model: {}", model_id);
+
+            let result = manager.verify_downloaded_model(&model_id).await;
+
+            assert!(result.is_ok(), "Should successfully verify unified model");
+            let (supports_vision, supports_audio) = result.unwrap();
+            assert!(
+                supports_vision || supports_audio,
+                "Unified model should support at least vision or audio"
+            );
+        } else {
+            eprintln!("Skipping test - no unified model found");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_verify_downloaded_model_nonexistent() {
+        let manager = ModelManager::new().unwrap();
+
+        let result = manager.verify_downloaded_model("nonexistent-model-xyz-123").await;
+
+        assert!(result.is_err(), "Should fail for nonexistent model");
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires actual downloaded model
+    async fn test_verify_downloaded_model_audio() {
+        let manager = ModelManager::new().unwrap();
+
+        // Look for audio models
+        let audio_model_patterns = ["ultravox", "qwen2_audio"];
+        let mut audio_model_id: Option<String> = None;
+
+        if let Ok(entries) = tokio::fs::read_dir(&manager.models_dir).await {
+            let mut entries = entries;
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if let Ok(file_type) = entry.file_type().await {
+                    if file_type.is_dir() {
+                        if let Some(model_id) = entry.file_name().to_str() {
+                            let model_id_lower = model_id.to_lowercase();
+                            if audio_model_patterns.iter().any(|p| model_id_lower.contains(p)) {
+                                audio_model_id = Some(model_id.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(model_id) = audio_model_id {
+            println!("Testing audio model: {}", model_id);
+
+            let result = manager.verify_downloaded_model(&model_id).await;
+
+            assert!(result.is_ok(), "Should successfully verify audio model");
+            let (supports_vision, supports_audio) = result.unwrap();
+            assert!(supports_audio, "Audio model should support audio");
+        } else {
+            eprintln!("Skipping test - no audio model found");
+        }
+    }
+
+    // Integration test for get_model_paths with multimodal detection
+    #[tokio::test]
+    #[ignore] // Requires actual downloaded model
+    async fn test_get_model_paths_with_verification() {
+        let manager = ModelManager::new().unwrap();
+
+        // Test with SmolVLM2 if it exists
+        let model_id = "smolvlm2-2.2b-instruct";
+        let model_dir = manager.models_dir.join(model_id);
+
+        if !model_dir.exists() {
+            eprintln!("Skipping test - model not downloaded: {}", model_id);
+            return;
+        }
+
+        // First verify the model is multimodal
+        let verify_result = manager.verify_downloaded_model(model_id).await;
+        assert!(verify_result.is_ok(), "Model should pass verification");
+        let (supports_vision, _) = verify_result.unwrap();
+        assert!(supports_vision, "SmolVLM2 should support vision");
+
+        // Then get model paths
+        let paths_result = manager.get_model_paths(model_id).await;
+        assert!(paths_result.is_ok(), "Should get model paths");
+
+        let (lang_path, mmproj_path) = paths_result.unwrap();
+        assert!(lang_path.exists(), "Language model file should exist");
+        assert!(mmproj_path.exists(), "MMProj file should exist");
     }
 }
