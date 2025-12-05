@@ -110,6 +110,9 @@ extern "C" {
     ) -> *mut MtmdContext;
     fn mtmd_free(ctx: *mut MtmdContext);
 
+    fn mtmd_support_vision(ctx: *const MtmdContext) -> bool;
+    fn mtmd_support_audio(ctx: *const MtmdContext) -> bool;
+
     fn mtmd_bitmap_init(nx: u32, ny: u32, data: *const u8) -> *mut MtmdBitmap;
     fn mtmd_bitmap_free(bitmap: *mut MtmdBitmap);
 
@@ -192,6 +195,44 @@ impl LlamaInference {
         // with proper batching, sampling, and token generation
         Ok(format!("Mock response to: {}", prompt))
     }
+
+    /// Check if a GGUF file supports vision or audio by loading it with mtmd
+    /// This is the proper way to detect multimodal capabilities, as used by llama-mtmd-cli
+    pub fn check_multimodal_support(model_path: &str, mmproj_path: &str) -> Result<(bool, bool)> {
+        unsafe {
+            // Load the main model temporarily
+            let model_path_c = CString::new(model_path)?;
+            let mut model_params = llama_model_default_params();
+            model_params.n_gpu_layers = 0; // CPU only for quick check
+            model_params.use_mmap = true;
+            model_params.use_mlock = false;
+
+            let model = llama_model_load_from_file(model_path_c.as_ptr(), model_params);
+            if model.is_null() {
+                return Err(anyhow!("Failed to load model from {}", model_path));
+            }
+
+            // Try to load the mmproj file
+            let mmproj_c = CString::new(mmproj_path)?;
+            let mtmd_params = mtmd_context_params_default();
+            let mtmd = mtmd_init_from_file(mmproj_c.as_ptr(), model, mtmd_params);
+
+            if mtmd.is_null() {
+                llama_model_free(model);
+                return Err(anyhow!("Failed to load mmproj from {}", mmproj_path));
+            }
+
+            // Check what the model supports
+            let supports_vision = mtmd_support_vision(mtmd);
+            let supports_audio = mtmd_support_audio(mtmd);
+
+            // Clean up
+            mtmd_free(mtmd);
+            llama_model_free(model);
+
+            Ok((supports_vision, supports_audio))
+        }
+    }
 }
 
 impl Drop for LlamaInference {
@@ -211,3 +252,192 @@ impl Drop for LlamaInference {
 }
 
 unsafe impl Send for LlamaInference {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    // Helper to get test model paths
+    fn get_test_model_dir() -> PathBuf {
+        // Use the models directory from ModelManager
+        crate::model_manager::ModelManager::get_models_directory()
+            .unwrap_or_else(|_| PathBuf::from("test_models"))
+    }
+
+    #[test]
+    #[ignore] // Requires actual model files
+    fn test_check_multimodal_support_vision_model() {
+        // Test with SmolVLM2 (separate mmproj file)
+        let model_dir = get_test_model_dir().join("smolvlm2-2.2b-instruct");
+
+        if !model_dir.exists() {
+            eprintln!("Skipping test - model directory not found: {:?}", model_dir);
+            return;
+        }
+
+        let lang_file = model_dir.join("SmolVLM2-2.2B-Instruct-Q4_K_M.gguf");
+        let mmproj_file = model_dir.join("mmproj-SmolVLM2-2.2B-Instruct-f16.gguf");
+
+        if !lang_file.exists() || !mmproj_file.exists() {
+            eprintln!("Skipping test - model files not found");
+            return;
+        }
+
+        let result = LlamaInference::check_multimodal_support(
+            lang_file.to_str().unwrap(),
+            mmproj_file.to_str().unwrap()
+        );
+
+        assert!(result.is_ok(), "Should successfully check model");
+        let (supports_vision, supports_audio) = result.unwrap();
+        assert!(supports_vision, "SmolVLM2 should support vision");
+        assert!(!supports_audio, "SmolVLM2 should not support audio");
+    }
+
+    #[test]
+    #[ignore] // Requires actual model files
+    fn test_check_multimodal_support_unified_model() {
+        // Test with Ministral or other unified model
+        let model_dir = get_test_model_dir();
+
+        // Look for any unified model (vision encoder embedded in main file)
+        // This would be a model like Ministral-8B-Instruct-2410-Q4_K_M.gguf
+        let mut unified_model_path: Option<PathBuf> = None;
+
+        if let Ok(entries) = std::fs::read_dir(&model_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Ok(files) = std::fs::read_dir(&path) {
+                        for file in files.flatten() {
+                            let file_path = file.path();
+                            let file_name = file_path.file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("");
+
+                            // Look for a single GGUF file (unified model)
+                            if file_name.ends_with(".gguf")
+                                && !file_name.contains("mmproj")
+                                && !file_name.contains("vision") {
+                                unified_model_path = Some(file_path);
+                                break;
+                            }
+                        }
+                    }
+                    if unified_model_path.is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(model_path) = unified_model_path {
+            println!("Testing unified model: {:?}", model_path);
+
+            // For unified models, mmproj_path is the same as model_path
+            let result = LlamaInference::check_multimodal_support(
+                model_path.to_str().unwrap(),
+                model_path.to_str().unwrap()
+            );
+
+            assert!(result.is_ok(), "Should successfully check unified model");
+            let (supports_vision, supports_audio) = result.unwrap();
+            assert!(
+                supports_vision || supports_audio,
+                "Unified model should support at least vision or audio"
+            );
+        } else {
+            eprintln!("Skipping test - no unified model found");
+        }
+    }
+
+    #[test]
+    #[ignore] // Requires actual model files
+    fn test_check_multimodal_support_audio_model() {
+        // Test with Ultravox or other audio model
+        let model_dir = get_test_model_dir();
+
+        // Look for audio model directory
+        let audio_model_dirs = ["ultravox", "qwen2_audio"];
+        let mut audio_model_path: Option<PathBuf> = None;
+        let mut audio_mmproj_path: Option<PathBuf> = None;
+
+        for dir_name in audio_model_dirs {
+            let test_dir = model_dir.join(dir_name);
+            if test_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&test_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        let file_name = path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("");
+
+                        if file_name.ends_with(".gguf") {
+                            if file_name.contains("mmproj") || file_name.contains("audio") {
+                                audio_mmproj_path = Some(path);
+                            } else {
+                                audio_model_path = Some(path);
+                            }
+                        }
+                    }
+                }
+                if audio_model_path.is_some() {
+                    break;
+                }
+            }
+        }
+
+        if let (Some(model_path), Some(mmproj_path)) = (audio_model_path.clone(), audio_mmproj_path.clone()) {
+            println!("Testing audio model: {:?}", model_path);
+
+            let result = LlamaInference::check_multimodal_support(
+                model_path.to_str().unwrap(),
+                mmproj_path.to_str().unwrap()
+            );
+
+            assert!(result.is_ok(), "Should successfully check audio model");
+            let (supports_vision, supports_audio) = result.unwrap();
+            assert!(supports_audio, "Audio model should support audio");
+        } else if let Some(model_path) = audio_model_path {
+            // Try as unified model
+            println!("Testing audio model (unified): {:?}", model_path);
+
+            let result = LlamaInference::check_multimodal_support(
+                model_path.to_str().unwrap(),
+                model_path.to_str().unwrap()
+            );
+
+            assert!(result.is_ok(), "Should successfully check unified audio model");
+            let (supports_vision, supports_audio) = result.unwrap();
+            assert!(supports_audio, "Audio model should support audio");
+        } else {
+            eprintln!("Skipping test - no audio model found");
+        }
+    }
+
+    #[test]
+    fn test_check_multimodal_support_nonexistent_files() {
+        let result = LlamaInference::check_multimodal_support(
+            "/nonexistent/model.gguf",
+            "/nonexistent/mmproj.gguf"
+        );
+
+        assert!(result.is_err(), "Should fail with nonexistent files");
+    }
+
+    #[test]
+    #[ignore] // Requires actual model files
+    fn test_check_multimodal_support_text_only_model() {
+        // This test would require a text-only GGUF model
+        // which should fail multimodal detection
+        let model_dir = get_test_model_dir();
+
+        // Look for a text-only model (no vision/audio support)
+        // These typically won't be in the models directory for this app
+        // but this test documents expected behavior
+
+        eprintln!("Note: This test requires a text-only GGUF model");
+        eprintln!("Text-only models should fail with 'Failed to load mmproj' error");
+    }
+}
