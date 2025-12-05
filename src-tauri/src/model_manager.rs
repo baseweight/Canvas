@@ -481,6 +481,134 @@ impl ModelManager {
 
         Ok(())
     }
+
+    /// Download SmolVLM ONNX model from HuggingFace
+    pub async fn download_smolvlm_onnx<F>(
+        &self,
+        repo: &str,
+        quantization: &str,
+        progress_callback: F,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<String>
+    where
+        F: Fn(DownloadProgress) + Send + 'static,
+    {
+        self.ensure_models_directory().await?;
+
+        let model_id = format!("{}_onnx_{}",
+            repo.replace("/", "_").replace("-", "_").to_lowercase(),
+            quantization.to_lowercase()
+        );
+        let model_dir = self.models_dir.join(&model_id);
+        fs::create_dir_all(&model_dir).await?;
+
+        // ONNX files to download for SmolVLM
+        let quant_suffix = match quantization {
+            "Q4" | "q4" => "q4",
+            "Q8" | "q8" => "q8",
+            "FP16" | "fp16" => "fp16",
+            _ => "q4", // default to Q4
+        };
+
+        // ONNX files are in onnx/ subdirectory, config/tokenizer at root
+        let onnx_files = vec![
+            format!("vision_encoder_{}.onnx", quant_suffix),
+            format!("embed_tokens_{}.onnx", quant_suffix),
+            format!("decoder_model_merged_{}.onnx", quant_suffix),
+        ];
+
+        let root_files = vec![
+            "config.json".to_string(),
+            "tokenizer.json".to_string(),
+        ];
+
+        // Download ONNX files from onnx/ subdirectory
+        for filename in onnx_files {
+            let file_path = model_dir.join(&filename);
+
+            // Skip if already downloaded
+            if file_path.exists() {
+                progress_callback(DownloadProgress {
+                    current: 100,
+                    total: 100,
+                    percentage: 100.0,
+                    file: format!("{} (already downloaded)", filename),
+                });
+                continue;
+            }
+
+            let url = format!("https://huggingface.co/{}/resolve/main/onnx/{}", repo, filename);
+            self.download_file(&url, &file_path, &filename, &progress_callback, cancel_flag.clone()).await?;
+        }
+
+        // Download config and tokenizer from root
+        for filename in root_files {
+            let file_path = model_dir.join(&filename);
+
+            // Skip if already downloaded
+            if file_path.exists() {
+                progress_callback(DownloadProgress {
+                    current: 100,
+                    total: 100,
+                    percentage: 100.0,
+                    file: format!("{} (already downloaded)", filename),
+                });
+                continue;
+            }
+
+            let url = format!("https://huggingface.co/{}/resolve/main/{}", repo, filename);
+            self.download_file(&url, &file_path, &filename, &progress_callback, cancel_flag.clone()).await?;
+        }
+
+        Ok(model_id)
+    }
+
+    /// Get ONNX model paths
+    pub async fn get_onnx_model_paths(&self, model_id: &str) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
+        let model_dir = self.models_dir.join(model_id);
+
+        if !model_dir.exists() {
+            return Err(anyhow!("ONNX model directory not found: {}", model_id));
+        }
+
+        // Find ONNX files
+        let mut vision_file: Option<PathBuf> = None;
+        let mut embed_file: Option<PathBuf> = None;
+        let mut decoder_file: Option<PathBuf> = None;
+        let mut tokenizer_file: Option<PathBuf> = None;
+
+        let mut entries = tokio::fs::read_dir(&model_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if let Some(filename) = path.file_name() {
+                let filename_str = filename.to_string_lossy();
+                if filename_str.contains("vision_encoder") && filename_str.ends_with(".onnx") {
+                    vision_file = Some(path.clone());
+                } else if filename_str.contains("embed_tokens") && filename_str.ends_with(".onnx") {
+                    embed_file = Some(path.clone());
+                } else if filename_str.contains("decoder_model") && filename_str.ends_with(".onnx") {
+                    decoder_file = Some(path.clone());
+                } else if filename_str == "tokenizer.json" {
+                    tokenizer_file = Some(path.clone());
+                }
+            }
+        }
+
+        match (vision_file, embed_file, decoder_file, tokenizer_file) {
+            (Some(vision), Some(embed), Some(decoder), Some(tokenizer)) => {
+                Ok((vision, embed, decoder, tokenizer))
+            }
+            _ => Err(anyhow!("Missing ONNX model files in directory")),
+        }
+    }
+
+    /// Check if ONNX model is downloaded
+    pub async fn is_onnx_model_downloaded(&self, model_id: &str) -> Result<bool> {
+        match self.get_onnx_model_paths(model_id).await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
 }
 
 #[cfg(test)]

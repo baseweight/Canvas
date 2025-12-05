@@ -7,7 +7,7 @@ import { ImageViewer } from "./components/ImageViewer";
 import { ChatPanel } from "./components/ChatPanel";
 import { ModelSelectionModal } from "./components/ModelSelectionModal";
 import { DownloadModelDialog } from "./components/DownloadModelDialog";
-import type { MediaItem, Model, AvailableModel, ChatMessage } from "./types";
+import type { MediaItem, Model, AvailableModel, OnnxModel, ChatMessage } from "./types";
 import "./App.css";
 
 // Bundled model that ships with Baseweight Canvas
@@ -90,6 +90,26 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     description: 'Mistral\'s latest 14B vision-language model with unified architecture and strong performance',
   },
 
+];
+
+// ONNX models for download
+const ONNX_MODELS: OnnxModel[] = [
+  {
+    id: 'smolvlm2-256m-video-instruct-onnx',
+    name: 'SmolVLM2-256M-Video-Instruct-ONNX',
+    displayName: 'SmolVLM2 256M Video Instruct (ONNX)',
+    task: 'general-vlm',
+    taskDescription: 'General Vision-Language Model',
+    huggingfaceRepo: 'HuggingFaceTB/SmolVLM2-256M-Video-Instruct',
+    huggingfaceUrl: 'https://huggingface.co/HuggingFaceTB/SmolVLM2-256M-Video-Instruct',
+    quantizations: ['Q4', 'Q8', 'FP16'],
+    estimatedSizes: {
+      'Q4': 0.3 * 1024 * 1024 * 1024,
+      'Q8': 0.5 * 1024 * 1024 * 1024,
+      'FP16': 0.8 * 1024 * 1024 * 1024,
+    },
+    description: 'SmolVLM2 256M ONNX Runtime backend - compact model optimized for GPU acceleration',
+  },
 ];
 
 interface DownloadProgress {
@@ -637,6 +657,78 @@ function App() {
     }
   };
 
+  const handleDownloadOnnxModel = async (repo: string, quantization: string) => {
+    console.log('Download ONNX model:', repo, quantization);
+
+    setIsDownloading(true);
+    setIsDownloadDialogOpen(true);
+    setFileProgress({});
+
+    try {
+      // Start the ONNX model download
+      const modelId = await invoke<string>('download_onnx_model', {
+        repo,
+        quantization,
+      });
+
+      console.log('ONNX model download completed, model ID:', modelId);
+
+      // Refresh downloaded models list
+      const downloadedModelIds = await invoke<string[]>('list_downloaded_models');
+      const newDownloadedModels = downloadedModelIds.map(id => {
+        // Check if it's a ONNX model
+        if (id.includes('_onnx_')) {
+          const onnxModel = ONNX_MODELS.find(m => modelId === id || m.huggingfaceRepo.replace('/', '_').toLowerCase().includes(id.split('_onnx_')[0]));
+          if (onnxModel) {
+            return {
+              id: modelId,
+              name: onnxModel.name,
+              displayName: onnxModel.displayName,
+              task: onnxModel.task,
+              taskDescription: onnxModel.taskDescription,
+              backend: 'onnx-runtime' as const,
+              huggingfaceUrl: onnxModel.huggingfaceUrl,
+              size: onnxModel.estimatedSizes[quantization] || 0,
+              downloaded: true,
+              quantization,
+              localPath: `/models/${modelId}`,
+            };
+          }
+        }
+
+        // Otherwise handle as GGUF model
+        if (id === BUNDLED_MODEL.id) {
+          return BUNDLED_MODEL;
+        }
+
+        const availableModel = MOCK_AVAILABLE_MODELS.find(m => m.id === id);
+        if (availableModel) {
+          return {
+            ...availableModel,
+            localPath: `/models/${id}`,
+            downloaded: true,
+          };
+        }
+
+        return null;
+      }).filter((m): m is Model => m !== null);
+
+      setDownloadedModels(newDownloadedModels);
+
+      setIsDownloading(false);
+      setIsDownloadDialogOpen(false);
+
+      if (modelId) {
+        alert(`ONNX model downloaded successfully!\nModel ID: ${modelId}`);
+      }
+    } catch (error) {
+      console.error('Failed to download ONNX model:', error);
+      alert(`Failed to download ONNX model: ${error}`);
+      setIsDownloading(false);
+      setIsDownloadDialogOpen(false);
+    }
+  };
+
   const handleAddModel = async (repo: string, quantization: string) => {
     console.log('Add model from HuggingFace:', repo, quantization);
 
@@ -767,8 +859,10 @@ function App() {
         currentModel={currentModel}
         downloadedModels={downloadedModels}
         availableModels={MOCK_AVAILABLE_MODELS}
+        onnxModels={ONNX_MODELS}
         onSelectModel={handleSelectModel}
         onDownloadModel={handleDownloadModel}
+        onDownloadOnnxModel={handleDownloadOnnxModel}
         onAddModel={handleAddModel}
       />
       <DownloadModelDialog
