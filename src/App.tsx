@@ -312,23 +312,36 @@ function App() {
 
       try {
         setIsModelLoading(true);
-        console.log('Loading model:', currentModel.id);
+        console.log('Loading model:', currentModel.id, 'backend:', currentModel.backend);
 
-        await invoke('load_model', {
-          modelId: currentModel.id,
-          nGpuLayers: 999, // Use all available GPU layers
-        });
+        // Load based on backend type
+        if (currentModel.backend === 'onnx-runtime') {
+          console.log('Loading ONNX model');
+          await invoke('load_onnx_model', {
+            modelId: currentModel.id,
+          });
+          console.log('ONNX model loaded successfully');
 
-        console.log('Model loaded successfully');
-
-        // Check if model supports audio
-        try {
-          const supportsAudio = await invoke<boolean>('check_audio_support');
-          setIsAudioCapable(supportsAudio);
-          console.log('Model audio support:', supportsAudio);
-        } catch (error) {
-          console.error('Failed to check audio support:', error);
+          // ONNX models don't support audio yet
           setIsAudioCapable(false);
+        } else {
+          // llama.cpp backend
+          console.log('Loading llama.cpp model');
+          await invoke('load_model', {
+            modelId: currentModel.id,
+            nGpuLayers: 999, // Use all available GPU layers
+          });
+          console.log('llama.cpp model loaded successfully');
+
+          // Check if model supports audio (llama.cpp only)
+          try {
+            const supportsAudio = await invoke<boolean>('check_audio_support');
+            setIsAudioCapable(supportsAudio);
+            console.log('Model audio support:', supportsAudio);
+          } catch (error) {
+            console.error('Failed to check audio support:', error);
+            setIsAudioCapable(false);
+          }
         }
 
         setIsModelLoading(false);
@@ -534,13 +547,40 @@ function App() {
 
         console.log('Sending conversation with', conversation.length, 'messages');
 
-        // Call inference with full conversation
-        response = await invoke<string>('generate_response', {
-          conversation,
-          imageData: rgbData,
-          imageWidth: img.width,
-          imageHeight: img.height,
-        });
+        // Call inference based on backend type
+        if (currentModel.backend === 'onnx-runtime') {
+          // ONNX Runtime - simpler single-turn for now
+          // Convert RGBA to raw bytes for ONNX
+          const canvas2 = document.createElement('canvas');
+          canvas2.width = img.width;
+          canvas2.height = img.height;
+          const ctx2 = canvas2.getContext('2d');
+          if (!ctx2) throw new Error('Failed to get canvas context');
+          ctx2.drawImage(img, 0, 0);
+
+          // Get image as JPEG bytes
+          const blob = await new Promise<Blob>((resolve) => {
+            canvas2.toBlob((b) => resolve(b!), 'image/jpeg', 0.95);
+          });
+          const arrayBuffer = await blob.arrayBuffer();
+          const imageBytes = Array.from(new Uint8Array(arrayBuffer));
+
+          console.log('Calling ONNX inference with image:', img.width, 'x', img.height);
+          response = await invoke<string>('generate_onnx_response', {
+            prompt: content,
+            imageData: imageBytes,
+            imageWidth: img.width,
+            imageHeight: img.height,
+          });
+        } else {
+          // llama.cpp backend - full conversation support
+          response = await invoke<string>('generate_response', {
+            conversation,
+            imageData: rgbData,
+            imageWidth: img.width,
+            imageHeight: img.height,
+          });
+        }
       }
 
       const assistantMessage: ChatMessage = {
