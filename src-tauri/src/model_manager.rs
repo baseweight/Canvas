@@ -98,9 +98,17 @@ impl ModelManager {
             if let Ok(file_type) = entry.file_type().await {
                 if file_type.is_dir() {
                     if let Some(model_id) = entry.file_name().to_str() {
-                        // Check if this directory contains at least one GGUF file
-                        if self.is_model_downloaded(model_id).await? {
-                            models.push(model_id.to_string());
+                        // Check if this is an ONNX model (has _onnx_ in the name)
+                        if model_id.contains("_onnx_") {
+                            // For ONNX models, check if directory contains .onnx files
+                            if self.is_onnx_model_downloaded(model_id).await? {
+                                models.push(model_id.to_string());
+                            }
+                        } else {
+                            // For GGUF models, check if directory contains .gguf files
+                            if self.is_model_downloaded(model_id).await? {
+                                models.push(model_id.to_string());
+                            }
                         }
                     }
                 }
