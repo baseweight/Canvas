@@ -777,29 +777,20 @@ function App() {
       const newDownloadedModels = downloadedModelIds.map(id => {
         // Check if it's a ONNX model
         if (id.includes('_onnx_')) {
-          // Extract the base repo name from the model ID
-          const baseName = id.split('_onnx_')[0];
-          const quantFromId = id.split('_onnx_')[1];
-
-          // Find matching ONNX model by comparing normalized repo names
-          const onnxModel = ONNX_MODELS.find(m => {
-            const normalizedRepo = m.huggingfaceRepo.replace('/', '_').replace(/-/g, '_').toLowerCase();
-            return normalizedRepo === baseName;
-          });
-
+         const onnxModel = ONNX_MODELS.find(m => modelId === id || m.huggingfaceRepo.replace('/', '_').toLowerCase().includes(id.split('_onnx_')[0]));
           if (onnxModel) {
             return {
-              id: id,
+              id: modelId,
               name: onnxModel.name,
-              displayName: `${onnxModel.displayName} (${quantFromId.toUpperCase()})`,
-              task: onnxModel.task,
+              displayName: onnxModel.displayName,
+             task: onnxModel.task,
               taskDescription: onnxModel.taskDescription,
               backend: 'onnx-runtime' as const,
               huggingfaceUrl: onnxModel.huggingfaceUrl,
-              size: onnxModel.estimatedSizes[quantFromId.toUpperCase()] || 0,
+              size: onnxModel.estimatedSizes[quantization] || 0,
               downloaded: true,
-              quantization: quantFromId.toUpperCase(),
-              localPath: `/models/${id}`,
+              quantization,
+              localPath: `/models/${modelId}`,
             };
           }
         }
