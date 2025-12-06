@@ -255,7 +255,8 @@ extern "C" {
     fn mtmd_bitmap_init_from_audio(n_samples: usize, data: *const c_float) -> *mut MtmdBitmap;
     fn mtmd_bitmap_is_audio(bitmap: *const MtmdBitmap) -> bool;
     fn mtmd_bitmap_free(bitmap: *mut MtmdBitmap);
-    fn mtmd_support_audio(ctx: *mut MtmdContext) -> bool;
+    fn mtmd_support_vision(ctx: *const MtmdContext) -> bool;
+    fn mtmd_support_audio(ctx: *const MtmdContext) -> bool;
     fn mtmd_get_audio_bitrate(ctx: *mut MtmdContext) -> c_int;
 
     fn mtmd_input_chunks_init() -> *mut MtmdInputChunks;

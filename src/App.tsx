@@ -34,7 +34,7 @@ const BUNDLED_MODEL: Model = {
 
 // Mock available models (for download) - Real models from HuggingFace collections
 const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
-  // Popular SmolVLM2 models (HuggingFace)
+  // SmolVLM2 2.2B Instruct - Best compact vision-language model
   {
     id: 'smolvlm2-2.2b-instruct',
     name: 'SmolVLM2-2.2B-Instruct-GGUF',
@@ -47,72 +47,8 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     quantization: 'Q4_K_M',
     description: 'Popular compact vision-language model from HuggingFace, excellent quality-to-size ratio',
   },
-  {
-    id: 'ggml_org_smolvlm2_500m_video_instruct_gguf',
-    name: 'SmolVLM2-500M-Video-Instruct-GGUF',
-    displayName: 'SmolVLM2 500M Video',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF',
-    size: 0.3 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'Tiny video-capable vision model, supports both images and video frames',
-  },
 
-  // PaliGemma (Google vision-language)
-  {
-    id: 'paligemma-3b',
-    name: 'paligemma-3b-mix-224-gguf',
-    displayName: 'PaliGemma 3B',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/abetlen/paligemma-3b-mix-224-gguf',
-    size: 2.5 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'Google\'s vision-language model based on Gemma, strong OCR and visual reasoning',
-  },
-
-  // ggml-org multimodal models
-  {
-    id: 'mistral-small-3.1-24b',
-    name: 'Mistral-Small-3.1-24B-Instruct-2503-GGUF',
-    displayName: 'Mistral Small 3.1 24B Instruct',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/ggml-org/Mistral-Small-3.1-24B-Instruct-2503-GGUF',
-    size: 14 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'Powerful 24B parameter vision-language model with strong instruction following',
-  },
-  {
-    id: 'pixtral-12b',
-    name: 'pixtral-12b-GGUF',
-    displayName: 'Pixtral 12B',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/ggml-org/pixtral-12b-GGUF',
-    size: 7 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'High-performance 12B vision model from Mistral AI',
-  },
-  {
-    id: 'moondream2-2025',
-    name: 'moondream2-20250414-GGUF',
-    displayName: 'Moondream 2 (2025)',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/ggml-org/moondream2-20250414-GGUF',
-    size: 0.3 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'Ultra-compact 500M parameter vision model, perfect for edge devices',
-  },
-
-  // Audio models
+  // Ultravox - Audio-capable language model
   {
     id: 'ggml_org_ultravox_v0_5_llama_3_2_1b_gguf',
     name: 'ultravox-v0_5-llama-3_2-1b-GGUF',
@@ -126,31 +62,7 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     description: 'Audio-capable language model based on Llama 3.2, supports speech understanding',
   },
 
-  // LiquidAI LFM2-VL models
-  {
-    id: 'lfm2-vl-3b',
-    name: 'LFM2-VL-3B-GGUF',
-    displayName: 'LFM2-VL 3B',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/LiquidAI/LFM2-VL-3B-GGUF',
-    size: 2 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'On-device optimized 3B vision-language model from Liquid AI',
-  },
-  {
-    id: 'lfm2-vl-1.6b',
-    name: 'LFM2-VL-1.6B-GGUF',
-    displayName: 'LFM2-VL 1.6B',
-    task: 'general-vlm',
-    taskDescription: 'General Vision-Language Model',
-    backend: 'llama.cpp',
-    huggingfaceUrl: 'https://huggingface.co/LiquidAI/LFM2-VL-1.6B-GGUF',
-    size: 1 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
-    description: 'Efficient 1.6B model designed for on-device deployment',
-  },
+  // LFM2-VL 450M - Ultra-lightweight vision model
   {
     id: 'lfm2-vl-450m',
     name: 'LFM2-VL-450M-GGUF',
@@ -160,8 +72,22 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     backend: 'llama.cpp',
     huggingfaceUrl: 'https://huggingface.co/LiquidAI/LFM2-VL-450M-GGUF',
     size: 0.3 * 1024 * 1024 * 1024,
-    quantization: 'Q4_K_M',
+    quantization: 'Q4_0',
     description: 'Ultra-lightweight 450M model for resource-constrained environments',
+  },
+
+  // Ministral 3 14B - Mistral's latest vision model
+  {
+    id: 'mistralai_ministral_3_14b_instruct_2512_gguf',
+    name: 'Ministral-3-14B-Instruct-2512-GGUF',
+    displayName: 'Ministral 3 14B Instruct',
+    task: 'general-vlm',
+    taskDescription: 'General Vision-Language Model',
+    backend: 'llama.cpp',
+    huggingfaceUrl: 'https://huggingface.co/mistralai/Ministral-3-14B-Instruct-2512-GGUF',
+    size: 8.5 * 1024 * 1024 * 1024,
+    quantization: 'Q4_K_M (BF16 mmproj)',
+    description: 'Mistral\'s latest 14B vision-language model with unified architecture and strong performance',
   },
 
 ];
@@ -711,19 +637,77 @@ function App() {
     }
   };
 
-  const handleAddModel = (repo: string, quantization: string) => {
+  const handleAddModel = async (repo: string, quantization: string) => {
     console.log('Add model from HuggingFace:', repo, quantization);
-    // TODO: Implement actual HuggingFace download logic
-    alert(
-      `Add Model from HuggingFace\n\n` +
-      `Repository: ${repo}\n` +
-      `Quantization: ${quantization}\n\n` +
-      `This will be implemented with the Rust backend:\n` +
-      `1. Fetch model card from HuggingFace\n` +
-      `2. Locate mmproj-*.gguf and model-${quantization.toLowerCase()}.gguf\n` +
-      `3. Download both files\n` +
-      `4. Add to downloaded models list`
-    );
+
+    try {
+      setIsDownloading(true);
+      setFileProgress({}); // Clear previous download progress
+      setIsDownloadDialogOpen(true); // Show download dialog
+      setIsModelModalOpen(false); // Close model selection modal
+      downloadCancelledRef.current = false; // Reset cancel flag
+
+      // Call the download_model command with quantization
+      const downloadedModelId = await invoke<string>('download_model', { repo, quantization });
+
+      // Model download complete
+      setIsDownloading(false);
+      setIsDownloadDialogOpen(false);
+
+      // Refresh the entire downloaded models list from backend
+      const modelIds = await invoke<string[]>('list_downloaded_models');
+      const models: Model[] = modelIds.map(modelId => {
+        // Check if it's the bundled model
+        if (modelId === BUNDLED_MODEL.id) {
+          return BUNDLED_MODEL;
+        }
+
+        // Find in available models
+        const availableModel = MOCK_AVAILABLE_MODELS.find(m => m.id === modelId);
+        if (availableModel) {
+          return {
+            ...availableModel,
+            localPath: `/models/${modelId}`,
+            downloaded: true,
+          } as Model;
+        }
+
+        // Fallback for unknown models (custom models added via "Add Model")
+        return {
+          id: modelId,
+          name: modelId,
+          displayName: modelId.split('_').map(word =>
+            word.charAt(0).toUpperCase() + word.slice(1)
+          ).join(' '),
+          task: 'general-vlm',
+          taskDescription: 'General Vision-Language Model',
+          backend: 'llama.cpp',
+          huggingfaceUrl: `https://huggingface.co/${repo}`,
+          size: 0,
+          localPath: `/models/${modelId}`,
+          downloaded: true,
+          quantization: quantization,
+        } as Model;
+      });
+
+      setDownloadedModels(models);
+
+      // Only load the model if download wasn't cancelled
+      if (!downloadCancelledRef.current) {
+        // Find and load the downloaded model
+        const downloadedModel = models.find(m => m.id === downloadedModelId);
+        if (downloadedModel) {
+          setCurrentModel(downloadedModel);
+        }
+
+        alert(`Model downloaded successfully!\nModel ID: ${downloadedModelId}`);
+      }
+    } catch (error) {
+      console.error('Failed to download model:', error);
+      alert(`Failed to download model: ${error}`);
+      setIsDownloading(false);
+      setIsDownloadDialogOpen(false);
+    }
   };
 
   const handleDownloadBundledModel = async () => {
