@@ -696,6 +696,7 @@ impl InferenceEngine {
         image_rgb: &[u8],
         image_width: u32,
         image_height: u32,
+        custom_template: Option<&str>,
     ) -> Result<String> {
         unsafe {
             println!("Starting inference with {} messages", conversation.len());
@@ -778,8 +779,13 @@ impl InferenceEngine {
 
             // Apply chat template to full conversation
             let mut formatted_prompt = vec![0u8; 32768]; // Larger buffer for full conversation
+
+            // Use custom template if provided, otherwise use model's default (null)
+            let template_c = custom_template.map(|t| CString::new(t).ok()).flatten();
+            let template_ptr = template_c.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+
             let n_bytes = llama_chat_apply_template(
-                std::ptr::null(),
+                template_ptr,
                 chat_msgs.as_ptr(),
                 chat_msgs.len(),
                 true, // add_assistant (prepare for model to respond)

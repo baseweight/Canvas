@@ -54,6 +54,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "resources/**/*"
+    ],
     "macOS": {
       "frameworks": [
         "libs/darwin-arm64/libllama.0.dylib",

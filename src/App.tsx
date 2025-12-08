@@ -102,6 +102,11 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     size: 2.5 * 1024 * 1024 * 1024,
     quantization: 'Q4_K_M',
     description: 'Compact 4B reasoning-focused vision-language model with strong performance',
+    chatTemplates: {
+      'default': 'resources/templates/r-4b/chat_template.jinja',
+      'long': 'resources/templates/r-4b/long-think.jinja',
+      'none': 'resources/templates/r-4b/no-think.jinja',
+    },
   },
 
 ];
@@ -129,6 +134,7 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAudioCapable, setIsAudioCapable] = useState(false);
   const [downloadedModels, setDownloadedModels] = useState<Model[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('default');
   const downloadCancelledRef = useRef(false);
 
   // Check if bundled model is downloaded on startup
@@ -528,12 +534,17 @@ function App() {
 
         console.log('Sending conversation with', conversation.length, 'messages');
 
+        // Get template path if selected template exists
+        const templatePath = currentModel.chatTemplates?.[selectedTemplate] || null;
+        console.log('Using template:', selectedTemplate, 'at path:', templatePath);
+
         // Call inference with full conversation
         response = await invoke<string>('generate_response', {
           conversation,
           imageData: rgbData,
           imageWidth: img.width,
           imageHeight: img.height,
+          templatePath,
         });
       }
 
@@ -774,6 +785,8 @@ function App() {
         onSendMessage={handleSendMessage}
         isAudioCapable={isAudioCapable}
         isGenerating={isGenerating}
+        selectedTemplate={selectedTemplate}
+        onTemplateChange={setSelectedTemplate}
       />
       <ModelSelectionModal
         isOpen={isModelModalOpen}

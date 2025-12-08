@@ -144,13 +144,43 @@ async fn load_model(
 // Run inference with an image and conversation history
 #[tauri::command]
 async fn generate_response(
+    app: tauri::AppHandle,
     conversation: Vec<ChatMessage>,
     image_data: Vec<u8>,
     image_width: u32,
     image_height: u32,
+    template_path: Option<String>,
     engine: State<'_, SharedInferenceEngine>,
 ) -> Result<String, String> {
     println!("Generating response for conversation with {} messages", conversation.len());
+
+    // Load custom template if provided
+    let template = if let Some(resource_path) = template_path {
+        println!("Resolving resource path: {}", resource_path);
+
+        // Resolve the resource path to an actual file path
+        match app.path().resolve(&resource_path, tauri::path::BaseDirectory::Resource) {
+            Ok(resolved_path) => {
+                println!("Resolved to: {:?}", resolved_path);
+                match std::fs::read_to_string(&resolved_path) {
+                    Ok(content) => {
+                        println!("Template loaded successfully, {} bytes", content.len());
+                        Some(content)
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to read template file {:?}: {}", resolved_path, e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to resolve resource path {}: {}", resource_path, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Take ownership of the engine temporarily
     let mut engine_lock = engine.lock().await;
@@ -166,7 +196,7 @@ async fn generate_response(
     // Run inference in a blocking task
     let (response, engine_instance) = tokio::task::spawn_blocking(move || {
         let mut eng = engine_opt.take().unwrap();
-        let result = eng.generate_with_conversation(&conversation, &image_data, image_width, image_height);
+        let result = eng.generate_with_conversation(&conversation, &image_data, image_width, image_height, template.as_deref());
         (result, eng)
     })
     .await

@@ -265,3 +265,29 @@
     transform: scale(1);
   }
 }
+
+.bw-chat-template-select {
+  width: 100%;
+  padding: 6px 8px;
+  background-color: #1e1e1e;
+  color: #cccccc;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+}
+
+.bw-chat-template-select:hover:not(:disabled) {
+  border-color: #505050;
+  background-color: #252526;
+}
+
+.bw-chat-template-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bw-chat-template-select:focus {
+  border-color: #007acc;
+}

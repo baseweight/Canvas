@@ -9,6 +9,8 @@ interface ChatPanelProps {
   onSendMessage: (message: string) => void;
   isAudioCapable?: boolean;
   isGenerating?: boolean;
+  selectedTemplate?: string;
+  onTemplateChange?: (template: string) => void;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -18,6 +20,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onSendMessage,
   isAudioCapable = false,
   isGenerating = false,
+  selectedTemplate = 'default',
+  onTemplateChange,
 }) => {
   const [inputValue, setInputValue] = useState('');
 
@@ -61,6 +65,24 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <div className="bw-chat-model-empty">-</div>
           )}
         </div>
+
+        {currentModel?.chatTemplates && Object.keys(currentModel.chatTemplates).length > 1 && (
+          <div className="bw-chat-info">
+            <label className="bw-chat-label">Thinking Mode</label>
+            <select
+              className="bw-chat-template-select"
+              value={selectedTemplate}
+              onChange={(e) => onTemplateChange?.(e.target.value)}
+              disabled={isGenerating}
+            >
+              {Object.keys(currentModel.chatTemplates).map((templateName) => (
+                <option key={templateName} value={templateName}>
+                  {templateName.charAt(0).toUpperCase() + templateName.slice(1)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="bw-chat-messages">

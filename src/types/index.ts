@@ -44,6 +44,9 @@ export interface Model {
     contextLength?: number;
     maxTokens?: number;
   };
+  chatTemplates?: {
+    [key: string]: string; // Maps template name to file path (e.g., "default", "short", "long", "none")
+  };
 }
 
 export interface InferenceJob {
@@ -92,4 +95,7 @@ export interface AvailableModel {
   size: number;
   quantization?: string;
   description?: string;
+  chatTemplates?: {
+    [key: string]: string; // Maps template name to file path (e.g., "default", "short", "long", "none")
+  };
 }
