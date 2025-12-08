@@ -90,6 +90,20 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
     description: 'Mistral\'s latest 14B vision-language model with unified architecture and strong performance',
   },
 
+  // R-4B - Compact reasoning-focused model
+  {
+    id: 'infil00p_r_4b_gguf',
+    name: 'R-4B-GGUF',
+    displayName: 'R-4B',
+    task: 'general-vlm',
+    taskDescription: 'General Vision-Language Model',
+    backend: 'llama.cpp',
+    huggingfaceUrl: 'https://huggingface.co/infil00p/R-4B-GGUF',
+    size: 2.5 * 1024 * 1024 * 1024,
+    quantization: 'Q4_K_M',
+    description: 'Compact 4B reasoning-focused vision-language model with strong performance',
+  },
+
 ];
 
 interface DownloadProgress {

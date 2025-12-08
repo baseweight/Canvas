@@ -121,9 +121,10 @@ struct MtmdContextParams {
     use_gpu: bool,
     print_timings: bool,
     n_threads: c_int,
-    image_marker: *const c_char,
+    image_marker: *const c_char, // this is deprecated, do we need this?
     media_marker: *const c_char,
     flash_attn_type: c_int,  // enum llama_flash_attn_type
+    warmup: bool,  // whether to run a warmup encode pass after initialization
     image_min_tokens: c_int,
     image_max_tokens: c_int,
 }
@@ -365,6 +366,9 @@ impl InferenceEngine {
             mtmd_params.use_gpu = n_gpu_layers > 0;
             mtmd_params.n_threads = 8;
             mtmd_params.print_timings = true;
+            mtmd_params.warmup = true;  // Re-enable warmup to get better error messages
+            // image_min_tokens and image_max_tokens are set by mtmd_context_params_default()
+            // They default to -1 (auto)
 
             println!("Calling mtmd_init_from_file... (this may take a moment)");
             println!("  mmproj_path: {}", mmproj_path);
