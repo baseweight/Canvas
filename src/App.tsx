@@ -114,7 +114,9 @@ function App() {
   const [_isModelLoading, setIsModelLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAudioCapable, setIsAudioCapable] = useState(false);
+  const [supportsSystemPrompt, setSupportsSystemPrompt] = useState(false);
   const [downloadedModels, setDownloadedModels] = useState<Model[]>([]);
+  const [systemPrompt, setSystemPrompt] = useState<string>("");
   const downloadCancelledRef = useRef(false);
 
   // Check if bundled model is downloaded on startup
@@ -198,6 +200,46 @@ function App() {
 
     loadDownloadedModels();
   }, []);
+
+  // Load system prompt when model changes
+  useEffect(() => {
+    const loadSystemPrompt = async () => {
+      if (!currentModel) {
+        setSystemPrompt("");
+        return;
+      }
+
+      try {
+        const prompt = await invoke<string | null>('load_system_prompt', {
+          modelId: currentModel.id
+        });
+        setSystemPrompt(prompt || "");
+      } catch (error) {
+        console.error('Failed to load system prompt:', error);
+        setSystemPrompt("");
+      }
+    };
+
+    loadSystemPrompt();
+  }, [currentModel]);
+
+  // Save system prompt when it changes (debounced)
+  useEffect(() => {
+    if (!currentModel || !systemPrompt) return;
+
+    const saveTimer = setTimeout(async () => {
+      try {
+        await invoke('save_system_prompt', {
+          modelId: currentModel.id,
+          prompt: systemPrompt
+        });
+      } catch (error) {
+        console.error('Failed to save system prompt:', error);
+      }
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(saveTimer);
+  }, [systemPrompt, currentModel]);
 
   // Listen for file-opened events from the File menu
   useEffect(() => {
@@ -309,6 +351,16 @@ function App() {
         } catch (error) {
           console.error('Failed to check audio support:', error);
           setIsAudioCapable(false);
+        }
+
+        // Check if model supports system prompts
+        try {
+          const supportsSystem = await invoke<boolean>('check_system_prompt_support');
+          setSupportsSystemPrompt(supportsSystem);
+          console.log('Model system prompt support:', supportsSystem);
+        } catch (error) {
+          console.error('Failed to check system prompt support:', error);
+          setSupportsSystemPrompt(false);
         }
 
         setIsModelLoading(false);
@@ -469,6 +521,7 @@ function App() {
         console.log('Calling inference with audio file:', audioPath);
         response = await invoke<string>('generate_response_audio', {
           prompt: content,
+          systemPrompt: systemPrompt || null,
           audioPath: audioPath,
         });
       } else {
@@ -517,6 +570,7 @@ function App() {
         // Call inference with full conversation
         response = await invoke<string>('generate_response', {
           conversation,
+          systemPrompt: systemPrompt || null,
           imageData: rgbData,
           imageWidth: img.width,
           imageHeight: img.height,
@@ -760,6 +814,9 @@ function App() {
         onSendMessage={handleSendMessage}
         isAudioCapable={isAudioCapable}
         isGenerating={isGenerating}
+        systemPrompt={systemPrompt}
+        onSystemPromptChange={setSystemPrompt}
+        supportsSystemPrompt={supportsSystemPrompt}
       />
       <ModelSelectionModal
         isOpen={isModelModalOpen}

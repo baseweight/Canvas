@@ -44,6 +44,11 @@ export interface Model {
     contextLength?: number;
     maxTokens?: number;
   };
+  capabilities?: {
+    supportsSystemPrompt?: boolean;
+    supportsToolUse?: boolean;
+    instructionFollowing?: 'excellent' | 'good' | 'limited' | 'none';
+  };
 }
 
 export interface InferenceJob {

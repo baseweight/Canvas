@@ -10,10 +10,12 @@ mod llama_inference;
 pub mod model_manager;
 pub mod inference_engine;
 mod audio_decoder;
+mod system_prompts;
 
 use model_manager::{ModelManager, DownloadProgress};
 use inference_engine::{InferenceEngine, SharedInferenceEngine, create_shared_engine};
 use audio_decoder::decode_audio_file;
+use system_prompts::SystemPromptManager;
 
 // Download cancellation state
 pub type DownloadCancellation = Arc<AtomicBool>;
@@ -145,12 +147,59 @@ async fn load_model(
 #[tauri::command]
 async fn generate_response(
     conversation: Vec<ChatMessage>,
+    system_prompt: Option<String>,
     image_data: Vec<u8>,
     image_width: u32,
     image_height: u32,
     engine: State<'_, SharedInferenceEngine>,
 ) -> Result<String, String> {
     println!("Generating response for conversation with {} messages", conversation.len());
+    println!("System prompt: {:?}", system_prompt);
+
+    // Check if the model supports system prompts
+    let engine_lock = engine.lock().await;
+    let supports_system = if let Some(eng) = engine_lock.as_ref() {
+        eng.supports_system_prompt()
+    } else {
+        return Err("Model not loaded".to_string());
+    };
+    drop(engine_lock);
+
+    println!("Model supports system prompts: {}", supports_system);
+
+    // Build conversation based on model support
+    let mut full_conversation = Vec::new();
+
+    if let Some(sys_prompt) = &system_prompt {
+        if !sys_prompt.is_empty() {
+            if supports_system {
+                // Model supports system role - add as system message
+                println!("Adding system prompt as system message");
+                full_conversation.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: sys_prompt.clone(),
+                });
+                full_conversation.extend(conversation);
+            } else if conversation.len() == 1 {
+                // Model doesn't support system role - prepend to first user message
+                println!("Prepending system prompt to first user message (model doesn't support system role)");
+                let mut modified_conversation = conversation.clone();
+                if let Some(first_user) = modified_conversation.iter_mut().find(|msg| msg.role == "user") {
+                    first_user.content = format!("{}\n\n{}", sys_prompt, first_user.content);
+                }
+                full_conversation = modified_conversation;
+            } else {
+                // Later messages, model doesn't support system role - just use conversation as-is
+                full_conversation = conversation.clone();
+            }
+        } else {
+            full_conversation = conversation.clone();
+        }
+    } else {
+        full_conversation = conversation.clone();
+    }
+
+    println!("Full conversation has {} messages", full_conversation.len());
 
     // Take ownership of the engine temporarily
     let mut engine_lock = engine.lock().await;
@@ -166,7 +215,7 @@ async fn generate_response(
     // Run inference in a blocking task
     let (response, engine_instance) = tokio::task::spawn_blocking(move || {
         let mut eng = engine_opt.take().unwrap();
-        let result = eng.generate_with_conversation(&conversation, &image_data, image_width, image_height);
+        let result = eng.generate_with_conversation(&full_conversation, &image_data, image_width, image_height);
         (result, eng)
     })
     .await
@@ -188,6 +237,20 @@ async fn check_audio_support(
 
     if let Some(eng) = engine_lock.as_ref() {
         Ok(eng.supports_audio())
+    } else {
+        Err("Model not loaded".to_string())
+    }
+}
+
+// Check if the current model supports system prompts
+#[tauri::command]
+async fn check_system_prompt_support(
+    engine: State<'_, SharedInferenceEngine>,
+) -> Result<bool, String> {
+    let engine_lock = engine.lock().await;
+
+    if let Some(eng) = engine_lock.as_ref() {
+        Ok(eng.supports_system_prompt())
     } else {
         Err("Model not loaded".to_string())
     }
@@ -230,10 +293,25 @@ async fn download_model(
 #[tauri::command]
 async fn generate_response_audio(
     prompt: String,
+    system_prompt: Option<String>,
     audio_path: String,
     engine: State<'_, SharedInferenceEngine>,
 ) -> Result<String, String> {
     println!("Generating response for audio file: {}", audio_path);
+    println!("System prompt: {:?}", system_prompt);
+
+    // Prepend system prompt to the user prompt (workaround for models that don't support system role)
+    // For audio, we always prepend since there's no conversation history
+    let final_prompt = if let Some(sys_prompt) = &system_prompt {
+        if !sys_prompt.is_empty() {
+            println!("Prepending system prompt to audio prompt: {}", sys_prompt);
+            format!("{}\n\n{}", sys_prompt, prompt)
+        } else {
+            prompt.clone()
+        }
+    } else {
+        prompt.clone()
+    };
 
     // Decode audio file
     let audio_data = tokio::task::spawn_blocking(move || {
@@ -272,7 +350,7 @@ async fn generate_response_audio(
                  audio_data.sample_rate, target_sample_rate,
                  audio_data.samples.len(), resampled_samples.len());
 
-        let result = eng.generate_with_audio(&prompt, &resampled_samples);
+        let result = eng.generate_with_audio(&final_prompt, &resampled_samples);
         (result, eng)
     })
     .await
@@ -283,6 +361,49 @@ async fn generate_response_audio(
     *engine_lock = Some(engine_instance);
 
     response.map_err(|e| e.to_string())
+}
+
+// Save system prompt for a model
+#[tauri::command]
+async fn save_system_prompt(
+    model_id: String,
+    prompt: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_config_dir = app.path().app_config_dir()
+        .map_err(|e| format!("Failed to get app config directory: {}", e))?;
+    let prompts_dir = app_config_dir.join("system_prompts");
+
+    let manager = SystemPromptManager::new(prompts_dir)?;
+    manager.save(&model_id, &prompt)
+}
+
+// Load system prompt for a model
+#[tauri::command]
+async fn load_system_prompt(
+    model_id: String,
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let app_config_dir = app.path().app_config_dir()
+        .map_err(|e| format!("Failed to get app config directory: {}", e))?;
+    let prompts_dir = app_config_dir.join("system_prompts");
+
+    let manager = SystemPromptManager::new(prompts_dir)?;
+    manager.load(&model_id)
+}
+
+// Clear system prompt for a model
+#[tauri::command]
+async fn clear_system_prompt(
+    model_id: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_config_dir = app.path().app_config_dir()
+        .map_err(|e| format!("Failed to get app config directory: {}", e))?;
+    let prompts_dir = app_config_dir.join("system_prompts");
+
+    let manager = SystemPromptManager::new(prompts_dir)?;
+    manager.clear(&model_id)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -304,7 +425,11 @@ pub fn run() {
             load_model,
             generate_response,
             check_audio_support,
-            generate_response_audio
+            check_system_prompt_support,
+            generate_response_audio,
+            save_system_prompt,
+            load_system_prompt,
+            clear_system_prompt
         ])
         .setup(|app| {
             // Create menu
