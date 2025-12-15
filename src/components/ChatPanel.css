@@ -265,3 +265,128 @@
     transform: scale(1);
   }
 }
+
+/* System Prompt Editor */
+.system-prompt-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.system-prompt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: transparent;
+  border: 1px solid #3e3e3e;
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  text-align: left;
+}
+
+.system-prompt-toggle:hover {
+  background-color: #2a2a2a;
+  border-color: #4e4e4e;
+}
+
+.system-prompt-icon {
+  font-size: 14px;
+}
+
+.system-prompt-label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.system-prompt-warning {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.system-prompt-chevron {
+  font-size: 10px;
+  color: #808080;
+}
+
+.system-prompt-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.system-prompt-notice {
+  padding: 8px;
+  background-color: #3a2f00;
+  border: 1px solid #665500;
+  border-radius: 4px;
+  color: #ffcc00;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.system-prompt-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px;
+  background-color: #1e1e1e;
+  border: 1px solid #3e3e3e;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  transition: border-color 0.2s ease;
+}
+
+.system-prompt-textarea:focus {
+  outline: none;
+  border-color: #0066ff;
+}
+
+.system-prompt-textarea::placeholder {
+  color: #606060;
+}
+
+.system-prompt-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.system-prompt-chars {
+  font-size: 11px;
+  color: #808080;
+}
+
+.system-prompt-clear {
+  background-color: transparent;
+  border: 1px solid #3e3e3e;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.system-prompt-clear:hover:not(:disabled) {
+  background-color: #2a2a2a;
+  border-color: #ff4444;
+  color: #ff4444;
+}
+
+.system-prompt-clear:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}

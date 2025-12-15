@@ -772,6 +772,12 @@ impl InferenceEngine {
             // Keep the CStrings alive
             let chat_msgs: Vec<LlamaChatMessage> = c_messages.iter().map(|(msg, _, _)| *msg).collect();
 
+            // Log the conversation before applying template
+            println!("Conversation messages ({} total):", conversation.len());
+            for (i, msg) in conversation.iter().enumerate() {
+                println!("  [{}] role='{}', content='{}'", i, msg.role, msg.content);
+            }
+
             // Apply chat template to full conversation
             let mut formatted_prompt = vec![0u8; 32768]; // Larger buffer for full conversation
             let n_bytes = llama_chat_apply_template(
@@ -1181,6 +1187,56 @@ impl InferenceEngine {
     pub fn get_audio_sample_rate(&self) -> i32 {
         unsafe {
             mtmd_get_audio_bitrate(self.mtmd_ctx)
+        }
+    }
+
+    /// Check if the model's chat template supports system prompts
+    pub fn supports_system_prompt(&self) -> bool {
+        unsafe {
+            // Create a test conversation with a system message
+            let system_role = CString::new("system").unwrap();
+            let system_content = CString::new("TEST_SYSTEM_PROMPT").unwrap();
+            let user_role = CString::new("user").unwrap();
+            let user_content = CString::new("test").unwrap();
+
+            let test_msgs = vec![
+                LlamaChatMessage {
+                    role: system_role.as_ptr(),
+                    content: system_content.as_ptr(),
+                },
+                LlamaChatMessage {
+                    role: user_role.as_ptr(),
+                    content: user_content.as_ptr(),
+                },
+            ];
+
+            // Try to format the conversation
+            let mut buffer = vec![0u8; 4096];
+            let n_bytes = llama_chat_apply_template(
+                std::ptr::null(),
+                test_msgs.as_ptr(),
+                test_msgs.len(),
+                true,
+                buffer.as_mut_ptr() as *mut c_char,
+                buffer.len() as c_int,
+            );
+
+            if n_bytes < 0 {
+                // Failed to apply template
+                return false;
+            }
+
+            buffer.truncate(n_bytes as usize);
+            let formatted = String::from_utf8_lossy(&buffer);
+
+            // Check if the system prompt appears in the formatted output
+            let contains_system = formatted.contains("TEST_SYSTEM_PROMPT");
+
+            println!("System prompt support test:");
+            println!("  Formatted output: {}", formatted);
+            println!("  Contains system prompt: {}", contains_system);
+
+            contains_system
         }
     }
 

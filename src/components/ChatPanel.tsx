@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { Model, ChatMessage } from '../types';
+import { SystemPromptEditor } from './SystemPromptEditor';
 import './ChatPanel.css';
 
 interface ChatPanelProps {
@@ -9,6 +10,9 @@ interface ChatPanelProps {
   onSendMessage: (message: string) => void;
   isAudioCapable?: boolean;
   isGenerating?: boolean;
+  systemPrompt?: string;
+  onSystemPromptChange?: (prompt: string) => void;
+  supportsSystemPrompt?: boolean;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -18,6 +22,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onSendMessage,
   isAudioCapable = false,
   isGenerating = false,
+  systemPrompt = '',
+  onSystemPromptChange,
+  supportsSystemPrompt = false,
 }) => {
   const [inputValue, setInputValue] = useState('');
 
@@ -61,6 +68,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <div className="bw-chat-model-empty">-</div>
           )}
         </div>
+
+        {onSystemPromptChange && (
+          <SystemPromptEditor
+            modelId={currentModel?.id}
+            systemPrompt={systemPrompt}
+            onSystemPromptChange={onSystemPromptChange}
+            supportsSystemPrompt={supportsSystemPrompt}
+          />
+        )}
       </div>
 
       <div className="bw-chat-messages">
