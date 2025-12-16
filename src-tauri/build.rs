@@ -44,7 +44,12 @@ fn main() {
     println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
 
     #[cfg(target_os = "linux")]
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+    {
+        // Use $ORIGIN to reference the directory containing the executable
+        // Libraries will be bundled in the same directory as the binary
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+    }
 
     // Re-run build script if libraries change
     println!("cargo:rerun-if-changed=libs/{}", lib_subdir);
