@@ -65,7 +65,7 @@ jobs:
           wget https://github.com/ggml-org/llama.cpp/releases/download/b7423/llama-b7423-bin-ubuntu-x64.tar.gz
           tar -xzf llama-b7423-bin-ubuntu-x64.tar.gz
           mkdir -p src-tauri/libs/linux-x64
-          find llama-b7423 -name "*.so*" -exec cp {} src-tauri/libs/linux-x64/ \;
+          cp -P llama-b7423/*.so* src-tauri/libs/linux-x64/ 2>/dev/null || true
           ls -la src-tauri/libs/linux-x64/
 
       - name: Download llama.cpp libraries (macOS)
@@ -74,7 +74,7 @@ jobs:
           wget https://github.com/ggml-org/llama.cpp/releases/download/b7423/llama-b7423-bin-macos-arm64.tar.gz
           tar -xzf llama-b7423-bin-macos-arm64.tar.gz
           mkdir -p src-tauri/libs/darwin-arm64
-          find llama-b7423 -name "*.dylib" -exec cp {} src-tauri/libs/darwin-arm64/ \;
+          cp -P llama-b7423/*.dylib src-tauri/libs/darwin-arm64/
           ls -la src-tauri/libs/darwin-arm64/
 
       - name: Download llama.cpp libraries (Windows)
@@ -84,7 +84,7 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/ggml-org/llama.cpp/releases/download/b7423/llama-b7423-bin-win-vulkan-x64.zip" -OutFile "llama-libs.zip"
           Expand-Archive -Path "llama-libs.zip" -DestinationPath "."
           New-Item -ItemType Directory -Force -Path src-tauri/libs/windows-x64-vulkan
-          Get-ChildItem -Path llama-b7423 -Recurse -Filter "*.dll" | Copy-Item -Destination src-tauri/libs/windows-x64-vulkan/
+          Copy-Item -Path "llama-b7423/*.dll" -Destination src-tauri/libs/windows-x64-vulkan/
           Get-ChildItem src-tauri/libs/windows-x64-vulkan/
 
       - name: Set Windows backend environment
