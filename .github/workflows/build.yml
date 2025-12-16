@@ -62,31 +62,26 @@ jobs:
       - name: Download llama.cpp libraries (Linux)
         if: matrix.platform.os == 'ubuntu-22.04'
         run: |
-          RELEASE_TAG=$(curl -s https://api.github.com/repos/ggerganov/llama.cpp/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-          wget https://github.com/ggerganov/llama.cpp/releases/download/${RELEASE_TAG}/llama-${RELEASE_TAG}-bin-ubuntu-x64.tar.gz
-          tar -xzf llama-${RELEASE_TAG}-bin-ubuntu-x64.tar.gz
+          wget https://github.com/ggml-org/llama.cpp/releases/download/b7423/llama-b7423-bin-ubuntu-x64.tar.gz
+          tar -xzf llama-b7423-bin-ubuntu-x64.tar.gz
           mkdir -p src-tauri/libs/linux-x64
-          find llama-${RELEASE_TAG}-bin-ubuntu-x64 -name "*.so*" -exec cp {} src-tauri/libs/linux-x64/ \;
+          find llama-b7423-bin-ubuntu-x64 -name "*.so*" -exec cp {} src-tauri/libs/linux-x64/ \;
           ls -la src-tauri/libs/linux-x64/
 
       - name: Download llama.cpp libraries (macOS)
         if: matrix.platform.os == 'macos-latest'
         run: |
-          RELEASE_TAG=$(curl -s https://api.github.com/repos/ggerganov/llama.cpp/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-          wget https://github.com/ggerganov/llama.cpp/releases/download/${RELEASE_TAG}/llama-${RELEASE_TAG}-bin-macos-arm64.tar.gz
-          tar -xzf llama-${RELEASE_TAG}-bin-macos-arm64.tar.gz
+          wget https://github.com/ggml-org/llama.cpp/releases/download/b7423/llama-b7423-bin-macos-arm64.tar.gz
+          tar -xzf llama-b7423-bin-macos-arm64.tar.gz
           mkdir -p src-tauri/libs/darwin-arm64
-          find llama-${RELEASE_TAG}-bin-macos-arm64 -name "*.dylib" -exec cp {} src-tauri/libs/darwin-arm64/ \;
+          find llama-b7423-bin-macos-arm64 -name "*.dylib" -exec cp {} src-tauri/libs/darwin-arm64/ \;
           ls -la src-tauri/libs/darwin-arm64/
 
       - name: Download llama.cpp libraries (Windows)
         if: matrix.platform.os == 'windows-latest'
         shell: powershell
         run: |
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest"
-          $tag = $release.tag_name
-          $url = "https://github.com/ggerganov/llama.cpp/releases/download/$tag/llama-$tag-bin-win-vulkan-x64.zip"
-          Invoke-WebRequest -Uri $url -OutFile "llama-libs.zip"
+          Invoke-WebRequest -Uri "https://github.com/ggml-org/llama.cpp/releases/download/b7423/llama-b7423-bin-win-vulkan-x64.zip" -OutFile "llama-libs.zip"
           Expand-Archive -Path "llama-libs.zip" -DestinationPath "llama-libs"
           New-Item -ItemType Directory -Force -Path src-tauri/libs/windows-x64-vulkan
           Get-ChildItem -Path llama-libs -Recurse -Filter "*.dll" | Copy-Item -Destination src-tauri/libs/windows-x64-vulkan/
