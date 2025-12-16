@@ -54,10 +54,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": {
-      "libs/linux-x64/*.so*": "../",
-      "libs/windows-x64-vulkan/*.dll": "../"
-    },
+    "resources": [
+      "libs/linux-x64/*",
+      "libs/windows-x64-vulkan/*"
+    ],
     "macOS": {
       "frameworks": [
         "libs/darwin-arm64/libllama.0.dylib",
