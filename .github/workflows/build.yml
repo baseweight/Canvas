@@ -119,6 +119,19 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Copy libraries for bundling (Linux)
+        if: matrix.platform.os == 'ubuntu-22.04'
+        run: |
+          mkdir -p src-tauri/resources
+          cp -P src-tauri/libs/linux-x64/* src-tauri/resources/
+
+      - name: Copy libraries for bundling (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/resources
+          Copy-Item -Path src-tauri/libs/windows-x64-vulkan/* -Destination src-tauri/resources/
+
       - name: Build Tauri application
         run: npm run tauri build
 

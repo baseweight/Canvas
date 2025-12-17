@@ -55,8 +55,7 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "libs/linux-x64/*",
-      "libs/windows-x64-vulkan/*"
+      "resources/*"
     ],
     "macOS": {
       "frameworks": [
