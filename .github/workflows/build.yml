@@ -82,9 +82,10 @@ jobs:
         shell: powershell
         run: |
           Invoke-WebRequest -Uri "https://github.com/ggml-org/llama.cpp/releases/download/b7423/llama-b7423-bin-win-vulkan-x64.zip" -OutFile "llama-libs.zip"
-          Expand-Archive -Path "llama-libs.zip" -DestinationPath "."
+          Expand-Archive -Path "llama-libs.zip" -DestinationPath "llama-extracted"
+          Get-ChildItem -Recurse llama-extracted | Select-Object FullName
           New-Item -ItemType Directory -Force -Path src-tauri/libs/windows-x64-vulkan
-          Copy-Item -Path "llama-b7423/*.dll" -Destination src-tauri/libs/windows-x64-vulkan/
+          Get-ChildItem -Path "llama-extracted" -Recurse -Filter "*.dll" | Copy-Item -Destination src-tauri/libs/windows-x64-vulkan/
           Get-ChildItem src-tauri/libs/windows-x64-vulkan/
 
       - name: Set Windows backend environment
