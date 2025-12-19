@@ -60,6 +60,19 @@
         "libs/darwin-arm64/libmtmd.0.dylib",
         "libs/darwin-arm64/libggml.0.dylib"
       ]
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    },
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "languages": ["English"]
+      }
     }
   }
 }

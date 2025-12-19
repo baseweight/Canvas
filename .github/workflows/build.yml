@@ -1,0 +1,220 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            rust_target: aarch64-apple-darwin
+          # Windows disabled temporarily - needs import library generation work
+          # - os: windows-latest
+          #   rust_target: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.platform.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.rust_target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Download llama.cpp libraries (Linux)
+        if: matrix.platform.os == 'ubuntu-22.04'
+        run: |
+          wget https://github.com/ggml-org/llama.cpp/releases/download/b7423/llama-b7423-bin-ubuntu-x64.tar.gz
+          tar -xzf llama-b7423-bin-ubuntu-x64.tar.gz
+          mkdir -p src-tauri/libs/linux-x64
+          cp -P llama-b7423/*.so* src-tauri/libs/linux-x64/ 2>/dev/null || true
+          ls -la src-tauri/libs/linux-x64/
+
+      - name: Download llama.cpp libraries (macOS)
+        if: matrix.platform.os == 'macos-latest'
+        run: |
+          wget https://github.com/ggml-org/llama.cpp/releases/download/b7423/llama-b7423-bin-macos-arm64.tar.gz
+          tar -xzf llama-b7423-bin-macos-arm64.tar.gz
+          mkdir -p src-tauri/libs/darwin-arm64
+          cp -P llama-b7423/*.dylib src-tauri/libs/darwin-arm64/
+          ls -la src-tauri/libs/darwin-arm64/
+
+      - name: Download llama.cpp libraries (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ggml-org/llama.cpp/releases/download/b7423/llama-b7423-bin-win-vulkan-x64.zip" -OutFile "llama-libs.zip"
+          Expand-Archive -Path "llama-libs.zip" -DestinationPath "llama-extracted"
+          Get-ChildItem -Recurse llama-extracted | Select-Object FullName
+          New-Item -ItemType Directory -Force -Path src-tauri/libs/windows-x64-vulkan
+          Get-ChildItem -Path "llama-extracted" -Recurse -Filter "*.dll" | Copy-Item -Destination src-tauri/libs/windows-x64-vulkan/
+          Get-ChildItem -Path "llama-extracted" -Recurse -Filter "*.lib" | Copy-Item -Destination src-tauri/libs/windows-x64-vulkan/
+          Get-ChildItem src-tauri/libs/windows-x64-vulkan/
+
+      - name: Generate import libraries from DLLs (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        shell: powershell
+        run: |
+          $libDir = "src-tauri\libs\windows-x64-vulkan"
+
+          # Find Visual Studio installation and setup environment
+          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vsWhere -latest -property installationPath
+          $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+
+          foreach ($name in @("llama", "ggml", "mtmd")) {
+            $dllPath = Join-Path $libDir "$name.dll"
+            if (Test-Path $dllPath) {
+              Write-Host "Generating import library for $name.dll"
+
+              # Run dumpbin and lib in a VS Developer environment
+              $defFile = Join-Path $libDir "$name.def"
+              $libFile = Join-Path $libDir "$name.lib"
+
+              # Use cmd to run vcvars and then our commands
+              cmd /c "`"$vcvarsall`" && dumpbin /exports `"$dllPath`" > `"$libDir\${name}_exports.txt`""
+
+              # Parse exports and create .def file
+              $exports = Get-Content "$libDir\${name}_exports.txt"
+              $inExports = $false
+              $defContent = "LIBRARY $name`r`nEXPORTS`r`n"
+
+              foreach ($line in $exports) {
+                if ($line -match "^\s+ordinal\s+hint\s+RVA\s+name") {
+                  $inExports = $true
+                  continue
+                }
+                if ($inExports -and $line -match "^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)") {
+                  $defContent += "  $($Matches[1])`r`n"
+                }
+                if ($inExports -and $line -match "^\s*$") {
+                  break
+                }
+              }
+
+              Set-Content -Path $defFile -Value $defContent
+
+              # Generate .lib from .def
+              cmd /c "`"$vcvarsall`" && lib /def:`"$defFile`" /machine:x64 /out:`"$libFile`""
+            }
+          }
+
+          Get-ChildItem "$libDir\*.lib"
+
+      - name: Set Windows backend environment
+        if: matrix.platform.os == 'windows-latest'
+        shell: powershell
+        run: echo "LLAMA_BACKEND=vulkan" >> $env:GITHUB_ENV
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run Rust tests (Linux)
+        if: matrix.platform.os == 'ubuntu-22.04'
+        working-directory: src-tauri
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/src-tauri/libs/linux-x64
+        run: cargo test --verbose
+
+      - name: Run Rust tests (macOS)
+        if: matrix.platform.os == 'macos-latest'
+        working-directory: src-tauri
+        env:
+          DYLD_LIBRARY_PATH: ${{ github.workspace }}/src-tauri/libs/darwin-arm64
+        run: cargo test --verbose
+
+      - name: Run Rust tests (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        working-directory: src-tauri
+        shell: powershell
+        run: |
+          $env:PATH = "${{ github.workspace }}\src-tauri\libs\windows-x64-vulkan;$env:PATH"
+          cargo test --verbose
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Copy libraries for bundling (Linux)
+        if: matrix.platform.os == 'ubuntu-22.04'
+        run: |
+          mkdir -p src-tauri/resources
+          cp -P src-tauri/libs/linux-x64/* src-tauri/resources/
+
+      - name: Copy libraries for bundling (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/resources
+          Copy-Item -Path src-tauri/libs/windows-x64-vulkan/* -Destination src-tauri/resources/
+
+      - name: Build Tauri application
+        run: npm run tauri build
+
+      - name: Upload artifacts (Linux)
+        if: matrix.platform.os == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
+
+      - name: Upload artifacts (macOS)
+        if: matrix.platform.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app
+          if-no-files-found: warn
+
+      - name: Upload artifacts (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: warn

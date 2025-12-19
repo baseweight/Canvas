@@ -22,6 +22,11 @@ fn create_solid_color_image(width: u32, height: u32, r: u8, g: u8, b: u8) -> Vec
 
 #[test]
 fn test_multi_turn_conversation_same_image() {
+    if std::env::var("CI").is_ok() {
+        println!("Skipping test in CI - requires SmolVLM model files");
+        return;
+    }
+
     let (model_path, mmproj_path) = get_model_paths();
 
     println!("Loading model...");
@@ -85,6 +90,11 @@ fn test_multi_turn_conversation_same_image() {
 
 #[test]
 fn test_contextual_crop_workflow() {
+    if std::env::var("CI").is_ok() {
+        println!("Skipping test in CI - requires SmolVLM model files");
+        return;
+    }
+
     let (model_path, mmproj_path) = get_model_paths();
 
     println!("Loading model for contextual crop test...");

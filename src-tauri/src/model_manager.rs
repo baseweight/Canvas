@@ -493,8 +493,9 @@ mod tests {
         let result = ModelManager::get_models_directory();
         assert!(result.is_ok());
         let path = result.unwrap();
-        assert!(path.to_string_lossy().contains("canvas"));
-        assert!(path.to_string_lossy().contains("models"));
+        let path_lower = path.to_string_lossy().to_lowercase();
+        assert!(path_lower.contains("canvas"), "Path should contain 'canvas': {}", path.display());
+        assert!(path_lower.contains("models"), "Path should contain 'models': {}", path.display());
     }
 
     #[tokio::test]

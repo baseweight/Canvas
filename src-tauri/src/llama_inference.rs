@@ -40,18 +40,57 @@ pub struct MtmdInputText {
 
 #[repr(C)]
 pub struct LlamaModelParams {
-    // Simplified - add fields as needed
+    // Pointers come first
+    devices: *mut c_void,
+    tensor_buft_overrides: *const c_void,
+    // Then the fields we care about
     n_gpu_layers: c_int,
+    split_mode: c_int,
+    main_gpu: c_int,
+    tensor_split: *const c_float,
+    progress_callback: *const c_void,
+    progress_callback_user_data: *mut c_void,
+    kv_overrides: *const c_void,
+    // Booleans at the end
+    vocab_only: bool,
     use_mmap: bool,
     use_mlock: bool,
+    check_tensors: bool,
+    // Padding to reach 72 bytes
+    _padding: [u8; 4],
 }
 
 #[repr(C)]
 pub struct LlamaContextParams {
     n_ctx: u32,
     n_batch: u32,
+    n_ubatch: u32,
+    n_seq_max: u32,
     n_threads: c_int,
+    n_threads_batch: c_int,
+    rope_scaling_type: c_int,
+    pooling_type: c_int,
+    attention_type: c_int,
+    flash_attn_type: c_int,
+    rope_freq_base: c_float,
+    rope_freq_scale: c_float,
+    yarn_ext_factor: c_float,
+    yarn_attn_factor: c_float,
+    yarn_beta_fast: c_float,
+    yarn_beta_slow: c_float,
+    yarn_orig_ctx: u32,
+    defrag_thold: c_float,
+    cb_eval: *const c_void,
+    cb_eval_user_data: *mut c_void,
+    type_k: c_int,
+    type_v: c_int,
+    logits_all: bool,
+    embeddings: bool,
+    offload_kqv: bool,
     flash_attn: bool,
+    no_perf: bool,
+    abort_callback: *const c_void,
+    abort_callback_data: *mut c_void,
 }
 
 #[repr(C)]
@@ -59,7 +98,11 @@ pub struct MtmdContextParams {
     use_gpu: bool,
     print_timings: bool,
     n_threads: c_int,
+    image_marker: *const c_char,
     media_marker: *const c_char,
+    flash_attn_type: c_int,
+    image_min_tokens: c_int,
+    image_max_tokens: c_int,
 }
 
 pub type LlamaToken = i32;
