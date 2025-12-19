@@ -89,6 +89,56 @@ jobs:
           Get-ChildItem -Path "llama-extracted" -Recurse -Filter "*.lib" | Copy-Item -Destination src-tauri/libs/windows-x64-vulkan/
           Get-ChildItem src-tauri/libs/windows-x64-vulkan/
 
+      - name: Generate import libraries from DLLs (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        shell: powershell
+        run: |
+          $libDir = "src-tauri\libs\windows-x64-vulkan"
+
+          # Find Visual Studio installation and setup environment
+          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vsWhere -latest -property installationPath
+          $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+
+          foreach ($name in @("llama", "ggml", "mtmd")) {
+            $dllPath = Join-Path $libDir "$name.dll"
+            if (Test-Path $dllPath) {
+              Write-Host "Generating import library for $name.dll"
+
+              # Run dumpbin and lib in a VS Developer environment
+              $defFile = Join-Path $libDir "$name.def"
+              $libFile = Join-Path $libDir "$name.lib"
+
+              # Use cmd to run vcvars and then our commands
+              cmd /c "`"$vcvarsall`" && dumpbin /exports `"$dllPath`" > `"$libDir\${name}_exports.txt`""
+
+              # Parse exports and create .def file
+              $exports = Get-Content "$libDir\${name}_exports.txt"
+              $inExports = $false
+              $defContent = "LIBRARY $name`r`nEXPORTS`r`n"
+
+              foreach ($line in $exports) {
+                if ($line -match "^\s+ordinal\s+hint\s+RVA\s+name") {
+                  $inExports = $true
+                  continue
+                }
+                if ($inExports -and $line -match "^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)") {
+                  $defContent += "  $($Matches[1])`r`n"
+                }
+                if ($inExports -and $line -match "^\s*$") {
+                  break
+                }
+              }
+
+              Set-Content -Path $defFile -Value $defContent
+
+              # Generate .lib from .def
+              cmd /c "`"$vcvarsall`" && lib /def:`"$defFile`" /machine:x64 /out:`"$libFile`""
+            }
+          }
+
+          Get-ChildItem "$libDir\*.lib"
+
       - name: Set Windows backend environment
         if: matrix.platform.os == 'windows-latest'
         shell: powershell
