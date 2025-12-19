@@ -113,9 +113,10 @@ jobs:
       - name: Run Rust tests (Windows)
         if: matrix.platform.os == 'windows-latest'
         working-directory: src-tauri
-        env:
-          PATH: ${{ github.workspace }}\src-tauri\libs\windows-x64-vulkan;${{ env.PATH }}
-        run: cargo test --verbose
+        shell: powershell
+        run: |
+          $env:PATH = "${{ github.workspace }}\src-tauri\libs\windows-x64-vulkan;$env:PATH"
+          cargo test --verbose
 
       - name: Build frontend
         run: npm run build
