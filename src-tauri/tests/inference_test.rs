@@ -17,6 +17,11 @@ fn get_model_paths() -> (String, String) {
 
 #[test]
 fn test_model_loading() {
+    if std::env::var("CI").is_ok() {
+        println!("Skipping test in CI - requires SmolVLM model files");
+        return;
+    }
+
     let (model_path, mmproj_path) = get_model_paths();
 
     println!("Loading model from: {}", model_path);
@@ -28,6 +33,11 @@ fn test_model_loading() {
 
 #[test]
 fn test_simple_inference() {
+    if std::env::var("CI").is_ok() {
+        println!("Skipping test in CI - requires SmolVLM model files");
+        return;
+    }
+
     let (model_path, mmproj_path) = get_model_paths();
 
     println!("Loading model from: {}", model_path);

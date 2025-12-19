@@ -3,6 +3,11 @@ use image::GenericImageView;
 
 #[test]
 fn test_packraft_image_inference() {
+    if std::env::var("CI").is_ok() {
+        println!("Skipping test in CI - requires SmolVLM model files");
+        return;
+    }
+
     let model_path = "/home/bowserj/.local/share/canvas/models/smolvlm2-2.2b-instruct/SmolVLM2-2.2B-Instruct-Q4_K_M.gguf";
     let mmproj_path = "/home/bowserj/.local/share/canvas/models/smolvlm2-2.2b-instruct/mmproj-SmolVLM2-2.2B-Instruct-f16.gguf";
     let image_path = "/home/bowserj/packraft.jpg";
