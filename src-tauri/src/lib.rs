@@ -10,7 +10,7 @@ mod llama_inference;
 pub mod model_manager;
 pub mod inference_engine;
 mod audio_decoder;
-mod vlm_onnx;
+pub mod vlm_onnx;
 
 use model_manager::{ModelManager, DownloadProgress};
 use inference_engine::{InferenceEngine, SharedInferenceEngine, create_shared_engine};
@@ -327,7 +327,7 @@ async fn load_onnx_model(
     println!("Loading ONNX model: {}", model_id);
 
     let manager = ModelManager::new().map_err(|e| e.to_string())?;
-    let (vision_path, embed_path, decoder_path, tokenizer_path) = manager
+    let (vision_path, embed_path, decoder_path, tokenizer_path, config_path) = manager
         .get_onnx_model_paths(&model_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -336,10 +336,11 @@ async fn load_onnx_model(
     println!("Embed: {:?}", embed_path);
     println!("Decoder: {:?}", decoder_path);
     println!("Tokenizer: {:?}", tokenizer_path);
+    println!("Config: {:?}", config_path);
 
     // Load the ONNX model in a blocking task
     let engine = tokio::task::spawn_blocking(move || {
-        VlmOnnx::new(&vision_path, &embed_path, &decoder_path, &tokenizer_path)
+        VlmOnnx::new(&vision_path, &embed_path, &decoder_path, &tokenizer_path, &config_path)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?

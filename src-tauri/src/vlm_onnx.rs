@@ -3,15 +3,304 @@
 // Initially focused on SmolVLM, expandable to other VLMs
 
 use anyhow::{Result, Context};
-use image::DynamicImage;
+use image::{DynamicImage, GenericImageView};
 use ndarray::{Array, Array4, Array5, s};
 use ort::{
     session::{Session, builder::GraphOptimizationLevel},
     value::Value,
 };
+use serde::Deserialize;
 use std::collections::HashMap;
+use std::fs;
 use std::path::Path;
 use tokenizers::Tokenizer;
+
+// ============================================================================
+// SmolVLM Image Processor - handles 4x4 grid splitting + global image
+// ============================================================================
+
+const MAX_IMAGE_SIZE: u32 = 4096;
+const SMOLVLM_MEAN: [f32; 3] = [0.5, 0.5, 0.5];
+const SMOLVLM_STD: [f32; 3] = [0.5, 0.5, 0.5];
+
+struct SmolVLMImageProcessor {
+    size: HashMap<String, u32>,
+    max_image_size: HashMap<String, u32>,
+    rescale_factor: f32,
+    image_mean: [f32; 3],
+    image_std: [f32; 3],
+}
+
+impl Default for SmolVLMImageProcessor {
+    fn default() -> Self {
+        Self {
+            size: HashMap::from([("longest_edge".to_string(), 2048)]),
+            max_image_size: HashMap::from([("longest_edge".to_string(), 512)]),
+            rescale_factor: 1.0 / 255.0,
+            image_mean: SMOLVLM_MEAN,
+            image_std: SMOLVLM_STD,
+        }
+    }
+}
+
+impl SmolVLMImageProcessor {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn resize_output_size_rescale_to_max_len(
+        height: u32,
+        width: u32,
+        min_len: Option<u32>,
+        max_len: Option<u32>,
+    ) -> (u32, u32) {
+        let max_len = max_len.unwrap_or_else(|| height.max(width));
+        let aspect_ratio = width as f32 / height as f32;
+
+        let (mut width, mut height) = if width >= height {
+            let width = max_len;
+            let height = (width as f32 / aspect_ratio).round() as u32;
+            (width, height)
+        } else {
+            let height = max_len;
+            let width = (height as f32 * aspect_ratio).round() as u32;
+            (width, height)
+        };
+
+        let min_len = min_len.unwrap_or(1);
+        height = height.max(min_len);
+        width = width.max(min_len);
+
+        (height, width)
+    }
+
+    fn resize_output_size_scale_below_upper_bound(
+        height: u32,
+        width: u32,
+        max_len: Option<u32>,
+    ) -> (u32, u32) {
+        let max_len = max_len.unwrap_or_else(|| height.max(width));
+        let aspect_ratio = width as f32 / height as f32;
+
+        let (mut width, mut height) = if width >= height && width > max_len {
+            let width = max_len;
+            let height = (width as f32 / aspect_ratio).round() as u32;
+            (width, height)
+        } else if height > width && height > max_len {
+            let height = max_len;
+            let width = (height as f32 * aspect_ratio).round() as u32;
+            (width, height)
+        } else {
+            (width, height)
+        };
+
+        height = height.max(1);
+        width = width.max(1);
+
+        (height, width)
+    }
+
+    fn get_resize_output_image_size(
+        image: &DynamicImage,
+        resolution_max_side: u32,
+    ) -> (u32, u32) {
+        let (height, width) = (image.height(), image.width());
+
+        if height <= resolution_max_side && width <= resolution_max_side {
+            return (height, width);
+        }
+
+        let (height, width) = Self::resize_output_size_rescale_to_max_len(height, width, None, Some(resolution_max_side));
+        let (height, width) = Self::resize_output_size_scale_below_upper_bound(height, width, Some(MAX_IMAGE_SIZE));
+
+        (height, width)
+    }
+
+    fn resize(&self, image: DynamicImage, size: HashMap<String, u32>) -> Result<DynamicImage> {
+        let (height, width) = if let Some(longest_edge) = size.get("longest_edge") {
+            Self::get_resize_output_image_size(&image, *longest_edge)
+        } else if let (Some(height), Some(width)) = (size.get("height"), size.get("width")) {
+            (*height, *width)
+        } else {
+            return Err(anyhow::anyhow!("size must have 'longest_edge' or 'height' and 'width'"));
+        };
+
+        Ok(image.resize_exact(width, height, image::imageops::FilterType::Lanczos3))
+    }
+
+    fn split_image(
+        &self,
+        image: DynamicImage,
+        max_image_size: &HashMap<String, u32>,
+    ) -> Result<Vec<DynamicImage>> {
+        let (height, width) = (image.height(), image.width());
+        let max_size = max_image_size.get("longest_edge").unwrap_or(&512);
+
+        let mut frames = Vec::new();
+
+        // Always do a 4x4 split
+        let num_splits_h = 4;
+        let num_splits_w = 4;
+
+        let optimal_height = (height as f32 / num_splits_h as f32).ceil() as u32;
+        let optimal_width = (width as f32 / num_splits_w as f32).ceil() as u32;
+
+        for r in 0..num_splits_h {
+            for c in 0..num_splits_w {
+                let start_x = c * optimal_width;
+                let start_y = r * optimal_height;
+                let end_x = (start_x + optimal_width).min(width);
+                let end_y = (start_y + optimal_height).min(height);
+
+                let cropped = image.crop_imm(start_x, start_y, end_x - start_x, end_y - start_y);
+                let resized = self.resize(
+                    cropped,
+                    HashMap::from([
+                        ("height".to_string(), *max_size),
+                        ("width".to_string(), *max_size),
+                    ]),
+                )?;
+                frames.push(resized);
+            }
+        }
+
+        // Add the original image resized to max_size (global view)
+        let resized = self.resize(
+            image,
+            HashMap::from([
+                ("height".to_string(), *max_size),
+                ("width".to_string(), *max_size),
+            ]),
+        )?;
+        frames.push(resized);
+
+        Ok(frames)
+    }
+
+    fn preprocess(&self, image: DynamicImage) -> Result<(Array5<f32>, Array4<i64>)> {
+        // Convert to RGB
+        let image: DynamicImage = image.to_rgb8().into();
+
+        // Resize to longest_edge while preserving aspect ratio
+        let image = self.resize(image, self.size.clone())?;
+
+        // Resize to be multiples of max_image_size while preserving aspect ratio
+        let max_size = self.max_image_size.get("longest_edge").unwrap_or(&512);
+        let (height, width) = (image.height(), image.width());
+        let aspect_ratio = width as f32 / height as f32;
+
+        let (new_width, new_height) = if width >= height {
+            let new_width = ((width as f32 / *max_size as f32).ceil() * *max_size as f32) as u32;
+            let new_height = (new_width as f32 / aspect_ratio).round() as u32;
+            let new_height = ((new_height as f32 / *max_size as f32).ceil() * *max_size as f32) as u32;
+            (new_width, new_height)
+        } else {
+            let new_height = ((height as f32 / *max_size as f32).ceil() * *max_size as f32) as u32;
+            let new_width = (new_height as f32 * aspect_ratio).round() as u32;
+            let new_width = ((new_width as f32 / *max_size as f32).ceil() * *max_size as f32) as u32;
+            (new_width, new_height)
+        };
+
+        let resized = self.resize(
+            image,
+            HashMap::from([
+                ("height".to_string(), new_height),
+                ("width".to_string(), new_width),
+            ]),
+        )?;
+
+        // Split into 4x4 grid + global = 17 frames
+        let frames = self.split_image(resized, &self.max_image_size)?;
+
+        // Convert frames to arrays and normalize
+        let mut processed_frames = Vec::new();
+        for frame in &frames {
+            let mut array = Array5::<f32>::zeros((1, 1, 3, frame.height() as usize, frame.width() as usize));
+
+            // Note: Match the POC's coordinate handling - pixels() returns (x, y) but
+            // the POC destructures as (y, x), effectively transposing the image.
+            // We match this behavior for model compatibility.
+            for (x, y, pixel) in frame.pixels() {
+                for c in 0..3 {
+                    let val = pixel[c] as f32 * self.rescale_factor;
+                    let val = (val - self.image_mean[c]) / self.image_std[c];
+                    array[[0, 0, c, x as usize, y as usize]] = val;
+                }
+            }
+            processed_frames.push(array);
+        }
+
+        // Stack frames: (batch=1, num_frames=17, channels=3, height=512, width=512)
+        let batch = Array5::from_shape_fn(
+            (1, processed_frames.len(), 3, processed_frames[0].shape()[3], processed_frames[0].shape()[4]),
+            |(_, i, c, y, x)| {
+                processed_frames[i][[0, 0, c, y, x]]
+            },
+        );
+
+        // Create attention mask: (batch=1, num_frames=17, height=512, width=512)
+        let height = processed_frames[0].shape()[3];
+        let width = processed_frames[0].shape()[4];
+        let attention_mask = Array4::ones((1, processed_frames.len(), height, width));
+
+        Ok((batch, attention_mask))
+    }
+}
+
+// ============================================================================
+// Prompt expansion helpers for SmolVLM grid format
+// ============================================================================
+
+fn prompt_split_image(
+    image_seq_len: usize,
+    image_rows: usize,
+    image_cols: usize,
+) -> String {
+    let fake_token = "<fake_token_around_image>";
+    let image_token = "<image>";
+    let global_token = "<global-img>";
+
+    let mut text = String::new();
+    for n_h in 0..image_rows {
+        for n_w in 0..image_cols {
+            text.push_str(&format!(
+                "{}<row_{}_col_{}>{}",
+                fake_token,
+                n_h + 1,
+                n_w + 1,
+                image_token.repeat(image_seq_len)
+            ));
+        }
+        text.push('\n');
+    }
+    text.push_str(&format!(
+        "\n{}{}{}{}",
+        fake_token,
+        global_token,
+        image_token.repeat(image_seq_len),
+        fake_token
+    ));
+    text
+}
+
+fn get_image_prompt_string(image_seq_len: usize) -> String {
+    // SmolVLM uses 4x4 grid + global image
+    prompt_split_image(image_seq_len, 4, 4)
+}
+
+// JSON structures for parsing config.json
+#[derive(Deserialize)]
+struct HFConfig {
+    image_token_id: Option<u32>,
+    text_config: Option<TextConfig>,
+}
+
+#[derive(Deserialize)]
+struct TextConfig {
+    num_key_value_heads: Option<usize>,
+    num_hidden_layers: Option<usize>,
+    head_dim: Option<usize>,
+}
 
 #[cfg(target_os = "windows")]
 use ort::execution_providers::DirectMLExecutionProvider;
@@ -27,8 +316,9 @@ struct SmolVLMConfig {
     num_key_value_heads: usize,
     head_dim: usize,
     num_hidden_layers: usize,
-    eos_token_id: u32,
+    eos_token_ids: Vec<u32>,
     image_token_id: u32,
+    #[allow(dead_code)]
     max_context_length: usize,
 }
 
@@ -37,6 +327,7 @@ pub struct VlmOnnx {
     embed_session: Session,
     decoder_session: Session,
     tokenizer: Tokenizer,
+    image_processor: SmolVLMImageProcessor,
     config: SmolVLMConfig,
 }
 
@@ -46,8 +337,29 @@ impl VlmOnnx {
         embed_model_path: &Path,
         decoder_model_path: &Path,
         tokenizer_path: &Path,
+        config_path: &Path,
     ) -> Result<Self> {
         println!("Loading SmolVLM ONNX models...");
+
+        // Parse config.json to get model parameters
+        let config_str = fs::read_to_string(config_path)
+            .context("Failed to read config.json")?;
+        let hf_config: HFConfig = serde_json::from_str(&config_str)
+            .context("Failed to parse config.json")?;
+
+        let text_config = hf_config.text_config.unwrap_or(TextConfig {
+            num_key_value_heads: Some(3),
+            num_hidden_layers: Some(30),
+            head_dim: Some(64),
+        });
+
+        let num_key_value_heads = text_config.num_key_value_heads.unwrap_or(3);
+        let num_hidden_layers = text_config.num_hidden_layers.unwrap_or(30);
+        let head_dim = text_config.head_dim.unwrap_or(64);
+        let image_token_id = hf_config.image_token_id.unwrap_or(49190);
+
+        println!("Config: {} layers, {} kv heads, {} head_dim, image_token: {}",
+            num_hidden_layers, num_key_value_heads, head_dim, image_token_id);
 
         // Create sessions with platform-specific execution providers
         #[cfg(target_os = "windows")]
@@ -58,11 +370,27 @@ impl VlmOnnx {
             .context("Failed to create vision session")?;
 
         #[cfg(target_os = "linux")]
-        let vision_session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_execution_providers([CUDAExecutionProvider::default().build().error_on_failure()])?
-            .commit_from_file(vision_model_path)
-            .context("Failed to create vision session")?;
+        let vision_session = {
+            // Try CUDA first, fall back to CPU if it fails (e.g., cuDNN version mismatch)
+            let cuda_result = Session::builder()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_execution_providers([CUDAExecutionProvider::default().build()])?
+                .commit_from_file(vision_model_path);
+
+            match cuda_result {
+                Ok(session) => {
+                    println!("Vision encoder: using CUDA");
+                    session
+                }
+                Err(e) => {
+                    println!("CUDA failed for vision encoder ({}), falling back to CPU", e);
+                    Session::builder()?
+                        .with_optimization_level(GraphOptimizationLevel::Level3)?
+                        .commit_from_file(vision_model_path)
+                        .context("Failed to create vision session")?
+                }
+            }
+        };
 
         #[cfg(target_os = "macos")]
         let vision_session = Session::builder()?
@@ -79,11 +407,26 @@ impl VlmOnnx {
             .context("Failed to create embed session")?;
 
         #[cfg(target_os = "linux")]
-        let embed_session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_execution_providers([CUDAExecutionProvider::default().build().error_on_failure()])?
-            .commit_from_file(embed_model_path)
-            .context("Failed to create embed session")?;
+        let embed_session = {
+            let cuda_result = Session::builder()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_execution_providers([CUDAExecutionProvider::default().build()])?
+                .commit_from_file(embed_model_path);
+
+            match cuda_result {
+                Ok(session) => {
+                    println!("Embed tokens: using CUDA");
+                    session
+                }
+                Err(e) => {
+                    println!("CUDA failed for embed tokens ({}), falling back to CPU", e);
+                    Session::builder()?
+                        .with_optimization_level(GraphOptimizationLevel::Level3)?
+                        .commit_from_file(embed_model_path)
+                        .context("Failed to create embed session")?
+                }
+            }
+        };
 
         #[cfg(target_os = "macos")]
         let embed_session = Session::builder()?
@@ -99,11 +442,26 @@ impl VlmOnnx {
             .context("Failed to create decoder session")?;
 
         #[cfg(target_os = "linux")]
-        let decoder_session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_execution_providers([CUDAExecutionProvider::default().build().error_on_failure()])?
-            .commit_from_file(decoder_model_path)
-            .context("Failed to create decoder session")?;
+        let decoder_session = {
+            let cuda_result = Session::builder()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_execution_providers([CUDAExecutionProvider::default().build()])?
+                .commit_from_file(decoder_model_path);
+
+            match cuda_result {
+                Ok(session) => {
+                    println!("Decoder: using CUDA");
+                    session
+                }
+                Err(e) => {
+                    println!("CUDA failed for decoder ({}), falling back to CPU", e);
+                    Session::builder()?
+                        .with_optimization_level(GraphOptimizationLevel::Level3)?
+                        .commit_from_file(decoder_model_path)
+                        .context("Failed to create decoder session")?
+                }
+            }
+        };
 
         #[cfg(target_os = "macos")]
         let decoder_session = Session::builder()?
@@ -114,17 +472,12 @@ impl VlmOnnx {
         let tokenizer = Tokenizer::from_file(tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
 
-        // Get special tokens
-        let image_token_id = tokenizer.token_to_id("<image>")
-            .ok_or_else(|| anyhow::anyhow!("Failed to get image token ID"))?;
-        let eos_token_id = 2; // SmolVLM2 EOS token
+        let image_processor = SmolVLMImageProcessor::new();
 
-        // Auto-detect configuration from decoder
-        let decoder_inputs = &decoder_session.inputs;
+        // Auto-detect the number of layers from decoder inputs
+        // This is more reliable than config.json which may not match the actual model
         let mut max_layer = 0;
-        let detected_kv_heads = 5;
-
-        for input in decoder_inputs {
+        for input in decoder_session.inputs.iter() {
             if input.name.starts_with("past_key_values.") {
                 if let Some(layer_str) = input.name.split('.').nth(1) {
                     if let Ok(layer_num) = layer_str.parse::<usize>() {
@@ -133,15 +486,28 @@ impl VlmOnnx {
                 }
             }
         }
+        let detected_layers = max_layer + 1;
+        println!("Auto-detected {} layers from decoder model (config had {})", detected_layers, num_hidden_layers);
 
-        let num_hidden_layers = max_layer + 1;
-        println!("Auto-detected: {} layers, {} kv heads", num_hidden_layers, detected_kv_heads);
+        // SmolVLM uses multiple EOS tokens
+        let mut eos_token_ids = vec![2u32]; // Standard EOS
+        if let Some(end_of_utterance_id) = tokenizer.token_to_id("<end_of_utterance>") {
+            if !eos_token_ids.contains(&end_of_utterance_id) {
+                eos_token_ids.push(end_of_utterance_id);
+            }
+        }
+        if let Some(eos_s_id) = tokenizer.token_to_id("</s>") {
+            if !eos_token_ids.contains(&eos_s_id) {
+                eos_token_ids.push(eos_s_id);
+            }
+        }
+        println!("EOS token IDs: {:?}", eos_token_ids);
 
         let config = SmolVLMConfig {
-            num_key_value_heads: detected_kv_heads,
-            head_dim: 64,
-            num_hidden_layers,
-            eos_token_id,
+            num_key_value_heads,
+            head_dim,
+            num_hidden_layers: detected_layers,
+            eos_token_ids,
             image_token_id,
             max_context_length: 2048,
         };
@@ -151,23 +517,56 @@ impl VlmOnnx {
             embed_session,
             decoder_session,
             tokenizer,
+            image_processor,
             config,
         })
     }
 
-    pub fn generate(&mut self, prompt: &str, image_data: &[u8], width: u32, height: u32) -> Result<String> {
-        // Load and preprocess image
+    pub fn generate(&mut self, prompt: &str, image_data: &[u8], _width: u32, _height: u32) -> Result<String> {
+        // Load and preprocess image using SmolVLM image processor (4x4 grid + global)
         let image = image::load_from_memory(image_data)?;
-        let (processed_image, pixel_attention_mask) = preprocess_image(image)?;
+        let (processed_image, pixel_attention_mask) = self.image_processor.preprocess(image)?;
 
-        // Expand prompt with image tokens
-        let expanded_prompt = expand_prompt_with_image(prompt);
+        println!("Processed image shape: {:?}", processed_image.shape());
+        println!("Pixel attention mask shape: {:?}", pixel_attention_mask.shape());
+
+        // Run vision encoder to get image features
+        let mut vision_inputs: HashMap<&str, Value> = HashMap::new();
+        vision_inputs.insert("pixel_values", Value::from_array(processed_image.clone())?.into());
+
+        let pixel_attention_mask_bool = pixel_attention_mask.map(|&x| x != 0);
+        vision_inputs.insert("pixel_attention_mask", Value::from_array(pixel_attention_mask_bool)?.into());
+
+        let vision_outputs = self.vision_session.run(vision_inputs)?;
+        let image_features = vision_outputs[0].try_extract_array::<f32>()?.to_owned();
+
+        // Vision encoder output shape: (17, 64, 576) -> reshape to (1088, 576)
+        println!("Vision encoder output shape: {:?}", image_features.shape());
+        let total_size = image_features.shape()[0] * image_features.shape()[1];
+        let feature_dim = image_features.shape()[2];
+        println!("Image features: {} tokens, {} dims", total_size, feature_dim);
+        let image_features_reshaped = image_features.into_shape_with_order((total_size, feature_dim))?;
+
+        // Expand prompt with proper grid structure
+        // SmolVLM uses 64 image tokens per frame: ((512 // 16) ** 2) / (4**2) = 64
+        let image_seq_len = 64;
+        let image_prompt = get_image_prompt_string(image_seq_len);
+
+        // Replace <image> in prompt with expanded grid, or prepend if not present
+        let expanded_prompt = if prompt.contains("<image>") {
+            prompt.replace("<image>", &image_prompt)
+        } else {
+            format!("{}\n{}", image_prompt, prompt)
+        };
+        println!("Expanded prompt: {} chars, {} image tokens", expanded_prompt.len(), total_size);
 
         // Tokenize
         let encoding = self.tokenizer.encode(expanded_prompt, true)
             .map_err(|e| anyhow::anyhow!("Tokenization error: {}", e))?;
         let input_ids = encoding.get_ids().iter().map(|&x| x as i64).collect::<Vec<_>>();
         let attention_mask = encoding.get_attention_mask().iter().map(|&x| x as i64).collect::<Vec<_>>();
+
+        println!("Tokenized {} tokens", input_ids.len());
 
         // Initialize past key values
         let batch_size = 1;
@@ -178,21 +577,6 @@ impl VlmOnnx {
             past_key_values.insert(format!("past_key_values.{}.key", layer), key_array);
             past_key_values.insert(format!("past_key_values.{}.value", layer), value_array);
         }
-
-        // Get image features
-        let mut vision_inputs: HashMap<&str, Value> = HashMap::new();
-        vision_inputs.insert("pixel_values", Value::from_array(processed_image.clone())?.into());
-
-        let pixel_attention_mask_bool = pixel_attention_mask.map(|&x| x != 0);
-        vision_inputs.insert("pixel_attention_mask", Value::from_array(pixel_attention_mask_bool)?.into());
-
-        let vision_outputs = self.vision_session.run(vision_inputs)?;
-        let image_features = vision_outputs[0].try_extract_array::<f32>()?.to_owned();
-
-        // Reshape features
-        let total_size = image_features.shape()[0] * image_features.shape()[1];
-        let feature_dim = image_features.shape()[2];
-        let image_features_reshaped = image_features.into_shape_with_order((total_size, feature_dim))?;
 
         // Generation loop
         let max_new_tokens = 1024;
@@ -222,7 +606,7 @@ impl VlmOnnx {
             let embed_outputs = self.embed_session.run(embed_inputs)?;
             let mut input_embeds = embed_outputs[0].try_extract_array::<f32>()?.to_owned();
 
-            // Replace image token embeddings
+            // Replace image token embeddings with vision features
             let mut feature_idx = 0;
             for i in 0..input_ids.shape()[1] {
                 if input_ids[[0, i]] == self.config.image_token_id as i64 {
@@ -289,8 +673,8 @@ impl VlmOnnx {
 
             generated_tokens.push(next_token as u32);
 
-            // Check for EOS
-            if next_token == self.config.eos_token_id as i64 {
+            // Check for any EOS token
+            if self.config.eos_token_ids.contains(&(next_token as u32)) {
                 break;
             }
         }
@@ -300,32 +684,4 @@ impl VlmOnnx {
             .map_err(|e| anyhow::anyhow!("Decoding error: {}", e))?;
         Ok(generated_text)
     }
-}
-
-// Image preprocessing for SmolVLM
-fn preprocess_image(image: DynamicImage) -> Result<(Array5<f32>, Array4<i64>)> {
-    // Simple preprocessing - resize to 512x512 for now
-    let image = image.resize_exact(512, 512, image::imageops::FilterType::Lanczos3);
-    let image = image.to_rgb8();
-
-    let mut pixel_values = Array5::<f32>::zeros((1, 1, 3, 512, 512));
-
-    for (x, y, pixel) in image.enumerate_pixels() {
-        for c in 0..3 {
-            let val = pixel[c] as f32 / 255.0;
-            let normalized = (val - 0.5) / 0.5;
-            pixel_values[[0, 0, c, y as usize, x as usize]] = normalized;
-        }
-    }
-
-    let attention_mask = Array4::ones((1, 1, 512, 512));
-
-    Ok((pixel_values, attention_mask))
-}
-
-// Expand prompt with image tokens (simplified for now)
-fn expand_prompt_with_image(prompt: &str) -> String {
-    // For now, just repeat <image> token 64 times as per SmolVLM2
-    let image_tokens = "<image>".repeat(64);
-    prompt.replace("<image>", &image_tokens)
 }

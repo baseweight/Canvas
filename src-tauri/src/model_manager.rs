@@ -572,7 +572,7 @@ impl ModelManager {
     }
 
     /// Get ONNX model paths
-    pub async fn get_onnx_model_paths(&self, model_id: &str) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
+    pub async fn get_onnx_model_paths(&self, model_id: &str) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf, PathBuf)> {
         let model_dir = self.models_dir.join(model_id);
 
         if !model_dir.exists() {
@@ -584,6 +584,7 @@ impl ModelManager {
         let mut embed_file: Option<PathBuf> = None;
         let mut decoder_file: Option<PathBuf> = None;
         let mut tokenizer_file: Option<PathBuf> = None;
+        let mut config_file: Option<PathBuf> = None;
 
         let mut entries = tokio::fs::read_dir(&model_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
@@ -598,13 +599,15 @@ impl ModelManager {
                     decoder_file = Some(path.clone());
                 } else if filename_str == "tokenizer.json" {
                     tokenizer_file = Some(path.clone());
+                } else if filename_str == "config.json" {
+                    config_file = Some(path.clone());
                 }
             }
         }
 
-        match (vision_file, embed_file, decoder_file, tokenizer_file) {
-            (Some(vision), Some(embed), Some(decoder), Some(tokenizer)) => {
-                Ok((vision, embed, decoder, tokenizer))
+        match (vision_file, embed_file, decoder_file, tokenizer_file, config_file) {
+            (Some(vision), Some(embed), Some(decoder), Some(tokenizer), Some(config)) => {
+                Ok((vision, embed, decoder, tokenizer, config))
             }
             _ => Err(anyhow!("Missing ONNX model files in directory")),
         }
