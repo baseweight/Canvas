@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { Model, AvailableModel } from '../types';
+import type { Model, AvailableModel, OnnxModel } from '../types';
 import { AddModelDialog } from './AddModelDialog';
 import './ModelSelectionModal.css';
 
@@ -9,8 +9,10 @@ interface ModelSelectionModalProps {
   currentModel?: Model;
   downloadedModels: Model[];
   availableModels: AvailableModel[];
+  onnxModels: OnnxModel[];
   onSelectModel: (modelId: string) => void;
   onDownloadModel: (modelId: string) => void;
+  onDownloadOnnxModel: (repo: string, quantization: string) => void;
   onAddModel: (repo: string, quantization: string) => void;
 }
 
@@ -20,12 +22,15 @@ export const ModelSelectionModal: React.FC<ModelSelectionModalProps> = ({
   currentModel,
   downloadedModels,
   availableModels,
+  onnxModels,
   onSelectModel,
   onDownloadModel,
+  onDownloadOnnxModel,
   onAddModel,
 }) => {
-  const [activeTab, setActiveTab] = useState<'downloaded' | 'available'>('downloaded');
+  const [activeTab, setActiveTab] = useState<'downloaded' | 'available' | 'onnx'>('downloaded');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [selectedQuantizations, setSelectedQuantizations] = useState<{ [key: string]: string }>({});
 
   if (!isOpen) return null;
 
@@ -79,6 +84,12 @@ export const ModelSelectionModal: React.FC<ModelSelectionModalProps> = ({
             onClick={() => setActiveTab('available')}
           >
             Recommended Models ({availableModels.length})
+          </button>
+          <button
+            className={`bw-modal-tab ${activeTab === 'onnx' ? 'bw-modal-tab--active' : ''}`}
+            onClick={() => setActiveTab('onnx')}
+          >
+            ONNX Models ({onnxModels.length})
           </button>
         </div>
 
@@ -149,7 +160,7 @@ export const ModelSelectionModal: React.FC<ModelSelectionModalProps> = ({
                 ))
               )}
             </div>
-          ) : (
+          ) : activeTab === 'available' ? (
             <div className="bw-model-list">
               {availableModels.map(model => {
                 const isDownloaded = downloadedModels.some(m => m.id === model.id);
@@ -201,6 +212,71 @@ export const ModelSelectionModal: React.FC<ModelSelectionModalProps> = ({
                           Download Model
                         </button>
                       )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="bw-model-list">
+              {onnxModels.map(model => {
+                const selectedQuant = selectedQuantizations[model.id] || model.quantizations[0];
+                const estimatedSize = model.estimatedSizes[selectedQuant] || 0;
+
+                return (
+                  <div key={model.id} className="bw-model-card">
+                    <div className="bw-model-card-header">
+                      <div>
+                        <h3 className="bw-model-name">{model.displayName}</h3>
+                        <div className="bw-model-meta">
+                          <span className={`bw-model-task bw-model-task--${getTaskBadgeClass(model.task)}`}>
+                            {model.taskDescription}
+                          </span>
+                          <span className="bw-model-backend">ONNX Runtime</span>
+                        </div>
+                        {model.description && (
+                          <p className="bw-model-description">{model.description}</p>
+                        )}
+                        <div className="bw-dialog-field" style={{ marginTop: '12px' }}>
+                          <label htmlFor={`quant-${model.id}`} className="bw-dialog-label" style={{ fontSize: '13px' }}>
+                            Quantization:
+                          </label>
+                          <select
+                            id={`quant-${model.id}`}
+                            className="bw-dialog-select"
+                            style={{ padding: '6px 8px', fontSize: '13px' }}
+                            value={selectedQuant}
+                            onChange={(e) => setSelectedQuantizations({
+                              ...selectedQuantizations,
+                              [model.id]: e.target.value
+                            })}
+                          >
+                            {model.quantizations.map(quant => (
+                              <option key={quant} value={quant}>
+                                {quant} - {formatSize(model.estimatedSizes[quant])}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="bw-model-size">{formatSize(estimatedSize)}</div>
+                    </div>
+
+                    <div className="bw-model-card-footer">
+                      <a
+                        href={model.huggingfaceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bw-model-link"
+                      >
+                        View on HuggingFace →
+                      </a>
+                      <button
+                        className="bw-button-primary"
+                        onClick={() => onDownloadOnnxModel(model.huggingfaceRepo, selectedQuant)}
+                      >
+                        Download Model
+                      </button>
                     </div>
                   </div>
                 );

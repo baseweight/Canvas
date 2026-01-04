@@ -7,7 +7,7 @@ import { ImageViewer } from "./components/ImageViewer";
 import { ChatPanel } from "./components/ChatPanel";
 import { ModelSelectionModal } from "./components/ModelSelectionModal";
 import { DownloadModelDialog } from "./components/DownloadModelDialog";
-import type { MediaItem, Model, AvailableModel, ChatMessage } from "./types";
+import type { MediaItem, Model, AvailableModel, OnnxModel, ChatMessage } from "./types";
 import "./App.css";
 
 // Bundled model that ships with Baseweight Canvas
@@ -92,6 +92,26 @@ const MOCK_AVAILABLE_MODELS: AvailableModel[] = [
 
 ];
 
+// ONNX models for download
+const ONNX_MODELS: OnnxModel[] = [
+  {
+    id: 'smolvlm2-256m-video-instruct-onnx',
+    name: 'SmolVLM2-256M-Video-Instruct-ONNX',
+    displayName: 'SmolVLM2 256M Video Instruct (ONNX)',
+    task: 'general-vlm',
+    taskDescription: 'General Vision-Language Model',
+    huggingfaceRepo: 'HuggingFaceTB/SmolVLM2-256M-Video-Instruct',
+    huggingfaceUrl: 'https://huggingface.co/HuggingFaceTB/SmolVLM2-256M-Video-Instruct',
+    quantizations: ['Q4', 'Q8', 'FP16'],
+    estimatedSizes: {
+      'Q4': 0.3 * 1024 * 1024 * 1024,
+      'Q8': 0.5 * 1024 * 1024 * 1024,
+      'FP16': 0.8 * 1024 * 1024 * 1024,
+    },
+    description: 'SmolVLM2 256M ONNX Runtime backend - compact model optimized for GPU acceleration',
+  },
+];
+
 interface DownloadProgress {
   current: number;
   total: number;
@@ -157,6 +177,7 @@ function App() {
     const loadDownloadedModels = async () => {
       try {
         const modelIds = await invoke<string[]>('list_downloaded_models');
+        console.log('Downloaded model IDs:', modelIds);
 
         // Convert model IDs to full Model objects
         const models: Model[] = modelIds.map(modelId => {
@@ -165,7 +186,38 @@ function App() {
             return BUNDLED_MODEL;
           }
 
-          // Find in available models
+          // Check if it's an ONNX model
+          if (modelId.includes('_onnx_')) {
+            const baseName = modelId.split('_onnx_')[0];
+            const quantFromId = modelId.split('_onnx_')[1];
+            console.log(`ONNX model detected: ${modelId}, baseName: ${baseName}, quant: ${quantFromId}`);
+
+            const onnxModel = ONNX_MODELS.find(m => {
+              const normalizedRepo = m.huggingfaceRepo.replace('/', '_').replace(/-/g, '_').toLowerCase();
+              console.log(`  Comparing baseName "${baseName}" with normalized "${normalizedRepo}"`);
+              return normalizedRepo === baseName;
+            });
+
+            console.log(`  Found ONNX model match:`, onnxModel ? onnxModel.displayName : 'NO MATCH');
+
+            if (onnxModel) {
+              return {
+                id: modelId,
+                name: onnxModel.name,
+                displayName: `${onnxModel.displayName} (${quantFromId.toUpperCase()})`,
+                task: onnxModel.task,
+                taskDescription: onnxModel.taskDescription,
+                backend: 'onnx-runtime' as const,
+                huggingfaceUrl: onnxModel.huggingfaceUrl,
+                size: onnxModel.estimatedSizes[quantFromId.toUpperCase()] || 0,
+                downloaded: true,
+                quantization: quantFromId.toUpperCase(),
+                localPath: `/models/${modelId}`,
+              } as Model;
+            }
+          }
+
+          // Find in available models (GGUF models)
           const availableModel = MOCK_AVAILABLE_MODELS.find(m => m.id === modelId);
           if (availableModel) {
             return {
@@ -292,23 +344,36 @@ function App() {
 
       try {
         setIsModelLoading(true);
-        console.log('Loading model:', currentModel.id);
+        console.log('Loading model:', currentModel.id, 'backend:', currentModel.backend);
 
-        await invoke('load_model', {
-          modelId: currentModel.id,
-          nGpuLayers: 999, // Use all available GPU layers
-        });
+        // Load based on backend type
+        if (currentModel.backend === 'onnx-runtime') {
+          console.log('Loading ONNX model');
+          await invoke('load_onnx_model', {
+            modelId: currentModel.id,
+          });
+          console.log('ONNX model loaded successfully');
 
-        console.log('Model loaded successfully');
-
-        // Check if model supports audio
-        try {
-          const supportsAudio = await invoke<boolean>('check_audio_support');
-          setIsAudioCapable(supportsAudio);
-          console.log('Model audio support:', supportsAudio);
-        } catch (error) {
-          console.error('Failed to check audio support:', error);
+          // ONNX models don't support audio yet
           setIsAudioCapable(false);
+        } else {
+          // llama.cpp backend
+          console.log('Loading llama.cpp model');
+          await invoke('load_model', {
+            modelId: currentModel.id,
+            nGpuLayers: 999, // Use all available GPU layers
+          });
+          console.log('llama.cpp model loaded successfully');
+
+          // Check if model supports audio (llama.cpp only)
+          try {
+            const supportsAudio = await invoke<boolean>('check_audio_support');
+            setIsAudioCapable(supportsAudio);
+            console.log('Model audio support:', supportsAudio);
+          } catch (error) {
+            console.error('Failed to check audio support:', error);
+            setIsAudioCapable(false);
+          }
         }
 
         setIsModelLoading(false);
@@ -514,13 +579,40 @@ function App() {
 
         console.log('Sending conversation with', conversation.length, 'messages');
 
-        // Call inference with full conversation
-        response = await invoke<string>('generate_response', {
-          conversation,
-          imageData: rgbData,
-          imageWidth: img.width,
-          imageHeight: img.height,
-        });
+        // Call inference based on backend type
+        if (currentModel.backend === 'onnx-runtime') {
+          // ONNX Runtime - simpler single-turn for now
+          // Convert RGBA to raw bytes for ONNX
+          const canvas2 = document.createElement('canvas');
+          canvas2.width = img.width;
+          canvas2.height = img.height;
+          const ctx2 = canvas2.getContext('2d');
+          if (!ctx2) throw new Error('Failed to get canvas context');
+          ctx2.drawImage(img, 0, 0);
+
+          // Get image as JPEG bytes
+          const blob = await new Promise<Blob>((resolve) => {
+            canvas2.toBlob((b) => resolve(b!), 'image/jpeg', 0.95);
+          });
+          const arrayBuffer = await blob.arrayBuffer();
+          const imageBytes = Array.from(new Uint8Array(arrayBuffer));
+
+          console.log('Calling ONNX inference with image:', img.width, 'x', img.height);
+          response = await invoke<string>('generate_onnx_response', {
+            prompt: content,
+            imageData: imageBytes,
+            imageWidth: img.width,
+            imageHeight: img.height,
+          });
+        } else {
+          // llama.cpp backend - full conversation support
+          response = await invoke<string>('generate_response', {
+            conversation,
+            imageData: rgbData,
+            imageWidth: img.width,
+            imageHeight: img.height,
+          });
+        }
       }
 
       const assistantMessage: ChatMessage = {
@@ -592,7 +684,34 @@ function App() {
           return BUNDLED_MODEL;
         }
 
-        // Find in available models
+        // Check if it's an ONNX model
+        if (modelId.includes('_onnx_')) {
+          const baseName = modelId.split('_onnx_')[0];
+          const quantFromId = modelId.split('_onnx_')[1];
+
+          const onnxModel = ONNX_MODELS.find(m => {
+            const normalizedRepo = m.huggingfaceRepo.replace('/', '_').replace(/-/g, '_').toLowerCase();
+            return normalizedRepo === baseName;
+          });
+
+          if (onnxModel) {
+            return {
+              id: modelId,
+              name: onnxModel.name,
+              displayName: `${onnxModel.displayName} (${quantFromId.toUpperCase()})`,
+              task: onnxModel.task,
+              taskDescription: onnxModel.taskDescription,
+              backend: 'onnx-runtime' as const,
+              huggingfaceUrl: onnxModel.huggingfaceUrl,
+              size: onnxModel.estimatedSizes[quantFromId.toUpperCase()] || 0,
+              downloaded: true,
+              quantization: quantFromId.toUpperCase(),
+              localPath: `/models/${modelId}`,
+            } as Model;
+          }
+        }
+
+        // Find in available models (GGUF models)
         const availableModel = MOCK_AVAILABLE_MODELS.find(m => m.id === modelId);
         if (availableModel) {
           return {
@@ -632,6 +751,78 @@ function App() {
     } catch (error) {
       console.error('Failed to download model:', error);
       alert(`Failed to download model: ${error}`);
+      setIsDownloading(false);
+      setIsDownloadDialogOpen(false);
+    }
+  };
+
+  const handleDownloadOnnxModel = async (repo: string, quantization: string) => {
+    console.log('Download ONNX model:', repo, quantization);
+
+    setIsDownloading(true);
+    setIsDownloadDialogOpen(true);
+    setFileProgress({});
+
+    try {
+      // Start the ONNX model download
+      const modelId = await invoke<string>('download_onnx_model', {
+        repo,
+        quantization,
+      });
+
+      console.log('ONNX model download completed, model ID:', modelId);
+
+      // Refresh downloaded models list
+      const downloadedModelIds = await invoke<string[]>('list_downloaded_models');
+      const newDownloadedModels = downloadedModelIds.map(id => {
+        // Check if it's a ONNX model
+        if (id.includes('_onnx_')) {
+         const onnxModel = ONNX_MODELS.find(m => modelId === id || m.huggingfaceRepo.replace('/', '_').toLowerCase().includes(id.split('_onnx_')[0]));
+          if (onnxModel) {
+            return {
+              id: modelId,
+              name: onnxModel.name,
+              displayName: onnxModel.displayName,
+             task: onnxModel.task,
+              taskDescription: onnxModel.taskDescription,
+              backend: 'onnx-runtime' as const,
+              huggingfaceUrl: onnxModel.huggingfaceUrl,
+              size: onnxModel.estimatedSizes[quantization] || 0,
+              downloaded: true,
+              quantization,
+              localPath: `/models/${modelId}`,
+            };
+          }
+        }
+
+        // Otherwise handle as GGUF model
+        if (id === BUNDLED_MODEL.id) {
+          return BUNDLED_MODEL;
+        }
+
+        const availableModel = MOCK_AVAILABLE_MODELS.find(m => m.id === id);
+        if (availableModel) {
+          return {
+            ...availableModel,
+            localPath: `/models/${id}`,
+            downloaded: true,
+          };
+        }
+
+        return null;
+      }).filter((m): m is Model => m !== null);
+
+      setDownloadedModels(newDownloadedModels);
+
+      setIsDownloading(false);
+      setIsDownloadDialogOpen(false);
+
+      if (modelId) {
+        alert(`ONNX model downloaded successfully!\nModel ID: ${modelId}`);
+      }
+    } catch (error) {
+      console.error('Failed to download ONNX model:', error);
+      alert(`Failed to download ONNX model: ${error}`);
       setIsDownloading(false);
       setIsDownloadDialogOpen(false);
     }
@@ -767,8 +958,10 @@ function App() {
         currentModel={currentModel}
         downloadedModels={downloadedModels}
         availableModels={MOCK_AVAILABLE_MODELS}
+        onnxModels={ONNX_MODELS}
         onSelectModel={handleSelectModel}
         onDownloadModel={handleDownloadModel}
+        onDownloadOnnxModel={handleDownloadOnnxModel}
         onAddModel={handleAddModel}
       />
       <DownloadModelDialog

@@ -10,13 +10,18 @@ mod llama_inference;
 pub mod model_manager;
 pub mod inference_engine;
 mod audio_decoder;
+pub mod vlm_onnx;
 
 use model_manager::{ModelManager, DownloadProgress};
 use inference_engine::{InferenceEngine, SharedInferenceEngine, create_shared_engine};
 use audio_decoder::decode_audio_file;
+use vlm_onnx::VlmOnnx;
 
 // Download cancellation state
 pub type DownloadCancellation = Arc<AtomicBool>;
+
+// Shared ONNX engine
+pub type SharedOnnxEngine = Arc<tokio::sync::Mutex<Option<VlmOnnx>>>;
 
 // Chat message for conversation history
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,12 +290,123 @@ async fn generate_response_audio(
     response.map_err(|e| e.to_string())
 }
 
+// Download ONNX model from HuggingFace
+#[tauri::command]
+async fn download_onnx_model(
+    repo: String,
+    quantization: String,
+    app: tauri::AppHandle,
+    cancellation: State<'_, DownloadCancellation>,
+) -> Result<String, String> {
+    cancellation.store(false, Ordering::SeqCst);
+
+    let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    let cancel_flag = cancellation.inner().clone();
+
+    let model_id = manager
+        .download_smolvlm_onnx(
+            &repo,
+            &quantization,
+            move |progress: DownloadProgress| {
+                let _ = app.emit("download-progress", &progress);
+            },
+            cancel_flag,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(model_id)
+}
+
+// Load ONNX model
+#[tauri::command]
+async fn load_onnx_model(
+    model_id: String,
+    onnx_engine: State<'_, SharedOnnxEngine>,
+) -> Result<(), String> {
+    println!("Loading ONNX model: {}", model_id);
+
+    let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    let (vision_path, embed_path, decoder_path, tokenizer_path, config_path) = manager
+        .get_onnx_model_paths(&model_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    println!("Vision: {:?}", vision_path);
+    println!("Embed: {:?}", embed_path);
+    println!("Decoder: {:?}", decoder_path);
+    println!("Tokenizer: {:?}", tokenizer_path);
+    println!("Config: {:?}", config_path);
+
+    // Load the ONNX model in a blocking task
+    let engine = tokio::task::spawn_blocking(move || {
+        VlmOnnx::new(&vision_path, &embed_path, &decoder_path, &tokenizer_path, &config_path)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| e.to_string())?;
+
+    // Store the engine
+    let mut engine_lock = onnx_engine.lock().await;
+    *engine_lock = Some(engine);
+
+    println!("ONNX model loaded successfully");
+    Ok(())
+}
+
+// Generate response with ONNX model
+#[tauri::command]
+async fn generate_onnx_response(
+    prompt: String,
+    image_data: Vec<u8>,
+    image_width: u32,
+    image_height: u32,
+    onnx_engine: State<'_, SharedOnnxEngine>,
+) -> Result<String, String> {
+    println!("Generating ONNX response");
+
+    let mut engine_lock = onnx_engine.lock().await;
+    let mut engine_opt = engine_lock.take();
+
+    if engine_opt.is_none() {
+        return Err("ONNX model not loaded".to_string());
+    }
+
+    drop(engine_lock);
+
+    // Run inference in a blocking task
+    let (response, engine_instance) = tokio::task::spawn_blocking(move || {
+        let mut eng = engine_opt.take().unwrap();
+        let result = eng.generate(&prompt, &image_data, image_width, image_height);
+        (result, eng)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+
+    // Put the engine back
+    let mut engine_lock = onnx_engine.lock().await;
+    *engine_lock = Some(engine_instance);
+
+    response.map_err(|e| e.to_string())
+}
+
+// Check if ONNX model is downloaded
+#[tauri::command]
+async fn is_onnx_model_downloaded(model_id: String) -> Result<bool, String> {
+    let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    manager
+        .is_onnx_model_downloaded(&model_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(create_shared_engine())
+        .manage(Arc::new(tokio::sync::Mutex::new(None::<VlmOnnx>))) // ONNX engine
         .manage(Arc::new(AtomicBool::new(false))) // Download cancellation flag
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -304,7 +420,11 @@ pub fn run() {
             load_model,
             generate_response,
             check_audio_support,
-            generate_response_audio
+            generate_response_audio,
+            download_onnx_model,
+            load_onnx_model,
+            generate_onnx_response,
+            is_onnx_model_downloaded
         ])
         .setup(|app| {
             // Create menu

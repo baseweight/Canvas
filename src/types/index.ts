@@ -93,3 +93,16 @@ export interface AvailableModel {
   quantization?: string;
   description?: string;
 }
+
+export interface OnnxModel {
+  id: string;
+  name: string;
+  displayName: string;
+  task: ModelTask;
+  taskDescription: string;
+  huggingfaceRepo: string;
+  huggingfaceUrl: string;
+  quantizations: string[];  // Available quantizations (Q4, Q8, FP16)
+  estimatedSizes: { [key: string]: number };  // Size per quantization
+  description?: string;
+}
