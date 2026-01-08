@@ -620,6 +620,98 @@ impl ModelManager {
             Err(_) => Ok(false),
         }
     }
+
+    // ============================================================================
+    // SAM3 Model Management
+    // ============================================================================
+
+    /// SAM3 model directory name
+    const SAM3_MODEL_ID: &'static str = "sam3-tracker";
+
+    /// Get SAM3 model paths (vision encoder and decoder)
+    pub async fn get_sam3_model_paths(&self) -> Result<(PathBuf, PathBuf)> {
+        let sam3_dir = self.models_dir.join(Self::SAM3_MODEL_ID);
+
+        if !sam3_dir.exists() {
+            return Err(anyhow!("SAM3 model not found. Please download it first."));
+        }
+
+        // Look for ONNX files
+        let mut vision_encoder: Option<PathBuf> = None;
+        let mut decoder: Option<PathBuf> = None;
+
+        let mut entries = tokio::fs::read_dir(&sam3_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            if let Some(filename) = entry.file_name().to_str() {
+                let path = entry.path();
+                let filename_lower = filename.to_lowercase();
+
+                if filename_lower.contains("vision_encoder") && filename_lower.ends_with(".onnx") {
+                    vision_encoder = Some(path);
+                } else if (filename_lower.contains("decoder") || filename_lower.contains("prompt_encoder"))
+                    && filename_lower.ends_with(".onnx")
+                {
+                    decoder = Some(path);
+                }
+            }
+        }
+
+        match (vision_encoder, decoder) {
+            (Some(vision), Some(dec)) => Ok((vision, dec)),
+            _ => Err(anyhow!("Missing SAM3 model files (need vision_encoder*.onnx and *decoder*.onnx)")),
+        }
+    }
+
+    /// Check if SAM3 model is downloaded
+    pub async fn is_sam3_downloaded(&self) -> Result<bool> {
+        match self.get_sam3_model_paths().await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Download SAM3 model from HuggingFace
+    pub async fn download_sam3_model<F>(
+        &self,
+        progress_callback: F,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<()>
+    where
+        F: Fn(DownloadProgress) + Send + Clone + 'static,
+    {
+        // SAM3 tracker ONNX models from HuggingFace
+        // Using the quantized Q4 models for efficiency
+        // Note: ONNX models use external data files (.onnx_data) for weights
+        let repo = "onnx-community/sam3-tracker-ONNX";
+        let files = vec![
+            ("onnx/vision_encoder_q4.onnx", "vision_encoder_q4.onnx"),
+            ("onnx/vision_encoder_q4.onnx_data", "vision_encoder_q4.onnx_data"),
+            ("onnx/prompt_encoder_mask_decoder_q4.onnx", "prompt_encoder_mask_decoder_q4.onnx"),
+            ("onnx/prompt_encoder_mask_decoder_q4.onnx_data", "prompt_encoder_mask_decoder_q4.onnx_data"),
+        ];
+
+        let sam3_dir = self.models_dir.join(Self::SAM3_MODEL_ID);
+        fs::create_dir_all(&sam3_dir).await?;
+
+        for (remote_path, local_name) in files {
+            if cancel_flag.load(Ordering::SeqCst) {
+                return Err(anyhow!("Download cancelled"));
+            }
+
+            let url = format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                repo, remote_path
+            );
+            let local_path = sam3_dir.join(local_name);
+
+            println!("Downloading {} to {:?}", url, local_path);
+
+            self.download_file(&url, &local_path, local_name, progress_callback.clone(), cancel_flag.clone())
+                .await?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

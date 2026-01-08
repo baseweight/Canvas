@@ -18,6 +18,12 @@ interface DownloadModelDialogProps {
   onCancel: () => void;
   fileProgress: FileProgress;
   isDownloading: boolean;
+  // Optional customization for different model types
+  modelName?: string;
+  modelDescription?: string;
+  downloadSize?: string;
+  source?: string;
+  sourceRepo?: string;
 }
 
 export const DownloadModelDialog: React.FC<DownloadModelDialogProps> = ({
@@ -26,6 +32,11 @@ export const DownloadModelDialog: React.FC<DownloadModelDialogProps> = ({
   onCancel,
   fileProgress,
   isDownloading,
+  modelName = 'SmolVLM2 2.2B Instruct',
+  modelDescription = 'Baseweight Canvas ships with SmolVLM2 2.2B Instruct, a compact and efficient vision-language model.',
+  downloadSize = '~1.3 GB',
+  source = 'HuggingFace',
+  sourceRepo = 'ggml-org',
 }) => {
   if (!isOpen) return null;
 
@@ -46,7 +57,7 @@ export const DownloadModelDialog: React.FC<DownloadModelDialogProps> = ({
       <div className="bw-modal bw-download-modal">
         <div className="bw-modal-header">
           <h2 className="bw-modal-title">
-            {isDownloading ? 'Downloading Model...' : 'Download SmolVLM2 2.2B Instruct'}
+            {isDownloading ? 'Downloading Model...' : `Download ${modelName}`}
           </h2>
         </div>
 
@@ -54,25 +65,21 @@ export const DownloadModelDialog: React.FC<DownloadModelDialogProps> = ({
           {!isDownloading ? (
             <div className="bw-download-info">
               <p className="bw-download-description">
-                Baseweight Canvas ships with SmolVLM2 2.2B Instruct, a compact and efficient vision-language model.
+                {modelDescription}
               </p>
 
               <div className="bw-download-details">
                 <div className="bw-download-detail-row">
                   <span className="bw-download-label">Model:</span>
-                  <span className="bw-download-value">SmolVLM2 2.2B Instruct</span>
-                </div>
-                <div className="bw-download-detail-row">
-                  <span className="bw-download-label">Quantization:</span>
-                  <span className="bw-download-value">Q4_K_M</span>
+                  <span className="bw-download-value">{modelName}</span>
                 </div>
                 <div className="bw-download-detail-row">
                   <span className="bw-download-label">Download Size:</span>
-                  <span className="bw-download-value">~1.3 GB</span>
+                  <span className="bw-download-value">{downloadSize}</span>
                 </div>
                 <div className="bw-download-detail-row">
                   <span className="bw-download-label">Source:</span>
-                  <span className="bw-download-value">HuggingFace (ggml-org)</span>
+                  <span className="bw-download-value">{source} ({sourceRepo})</span>
                 </div>
               </div>
 
