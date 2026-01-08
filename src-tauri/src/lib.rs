@@ -11,17 +11,23 @@ pub mod model_manager;
 pub mod inference_engine;
 mod audio_decoder;
 pub mod vlm_onnx;
+pub mod sam3_engine;
+pub mod sam3_image_processor;
 
 use model_manager::{ModelManager, DownloadProgress};
 use inference_engine::{InferenceEngine, SharedInferenceEngine, create_shared_engine};
 use audio_decoder::decode_audio_file;
 use vlm_onnx::VlmOnnx;
+use sam3_engine::{Sam3Engine, Sam3SegmentResult};
 
 // Download cancellation state
 pub type DownloadCancellation = Arc<AtomicBool>;
 
 // Shared ONNX engine
 pub type SharedOnnxEngine = Arc<tokio::sync::Mutex<Option<VlmOnnx>>>;
+
+// Shared SAM3 engine
+pub type SharedSam3Engine = Arc<tokio::sync::Mutex<Option<Sam3Engine>>>;
 
 // Chat message for conversation history
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -400,6 +406,151 @@ async fn is_onnx_model_downloaded(model_id: String) -> Result<bool, String> {
         .map_err(|e| e.to_string())
 }
 
+// ============================================================================
+// SAM3 Commands
+// ============================================================================
+
+// Load SAM3 models
+#[tauri::command]
+async fn sam3_load(
+    sam3_engine: State<'_, SharedSam3Engine>,
+) -> Result<(), String> {
+    println!("Loading SAM3 models...");
+
+    let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    let (vision_path, decoder_path) = manager
+        .get_sam3_model_paths()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    println!("SAM3 Vision: {:?}", vision_path);
+    println!("SAM3 Decoder: {:?}", decoder_path);
+
+    // Load the SAM3 model in a blocking task
+    let engine = tokio::task::spawn_blocking(move || {
+        Sam3Engine::load(&vision_path, &decoder_path)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| e.to_string())?;
+
+    // Store the engine
+    let mut engine_lock = sam3_engine.lock().await;
+    *engine_lock = Some(engine);
+
+    println!("SAM3 loaded successfully");
+    Ok(())
+}
+
+// Unload SAM3 models to free GPU memory
+#[tauri::command]
+async fn sam3_unload(
+    sam3_engine: State<'_, SharedSam3Engine>,
+) -> Result<(), String> {
+    println!("Unloading SAM3...");
+
+    let mut engine_lock = sam3_engine.lock().await;
+    *engine_lock = None;
+
+    println!("SAM3 unloaded");
+    Ok(())
+}
+
+// Check if SAM3 is loaded
+#[tauri::command]
+async fn sam3_is_loaded(
+    sam3_engine: State<'_, SharedSam3Engine>,
+) -> Result<bool, String> {
+    let engine_lock = sam3_engine.lock().await;
+    Ok(engine_lock.is_some())
+}
+
+// Encode an image with SAM3 vision encoder
+#[tauri::command]
+async fn sam3_encode_image(
+    image_data: Vec<u8>,
+    sam3_engine: State<'_, SharedSam3Engine>,
+) -> Result<(), String> {
+    println!("Encoding image with SAM3...");
+
+    let mut engine_lock = sam3_engine.lock().await;
+    let engine = engine_lock.as_mut()
+        .ok_or_else(|| "SAM3 not loaded".to_string())?;
+
+    // Clone the image data for the blocking task
+    let image_data_clone = image_data.clone();
+
+    // We need to work around the borrow checker by taking ownership
+    let mut engine_taken = engine_lock.take()
+        .ok_or_else(|| "SAM3 not loaded".to_string())?;
+    drop(engine_lock);
+
+    // Run encoding in a blocking task
+    let result = tokio::task::spawn_blocking(move || {
+        engine_taken.encode_image(&image_data_clone)?;
+        Ok::<_, anyhow::Error>(engine_taken)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+
+    // Put the engine back
+    let engine_back = result.map_err(|e| e.to_string())?;
+    let mut engine_lock = sam3_engine.lock().await;
+    *engine_lock = Some(engine_back);
+
+    println!("Image encoded");
+    Ok(())
+}
+
+// Run SAM3 segmentation with prompts
+#[tauri::command]
+async fn sam3_segment(
+    points: Vec<(f32, f32)>,
+    labels: Vec<i64>,
+    bbox: Option<(f32, f32, f32, f32)>,
+    sam3_engine: State<'_, SharedSam3Engine>,
+) -> Result<Sam3SegmentResult, String> {
+    let mut engine_lock = sam3_engine.lock().await;
+    let engine = engine_lock.as_mut()
+        .ok_or_else(|| "SAM3 not loaded".to_string())?;
+
+    // Run segmentation (fast, can run in async context)
+    engine.segment(&points, &labels, bbox)
+        .map_err(|e| e.to_string())
+}
+
+// Check if SAM3 model is downloaded
+#[tauri::command]
+async fn sam3_is_model_downloaded() -> Result<bool, String> {
+    let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    manager
+        .is_sam3_downloaded()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// Download SAM3 model
+#[tauri::command]
+async fn sam3_download_model(
+    app: tauri::AppHandle,
+    cancellation: State<'_, DownloadCancellation>,
+) -> Result<(), String> {
+    cancellation.store(false, Ordering::SeqCst);
+
+    let manager = ModelManager::new().map_err(|e| e.to_string())?;
+    let cancel_flag = cancellation.inner().clone();
+
+    manager
+        .download_sam3_model(
+            move |progress: DownloadProgress| {
+                let _ = app.emit("download-progress", &progress);
+            },
+            cancel_flag,
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -407,6 +558,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(create_shared_engine())
         .manage(Arc::new(tokio::sync::Mutex::new(None::<VlmOnnx>))) // ONNX engine
+        .manage(Arc::new(tokio::sync::Mutex::new(None::<Sam3Engine>))) // SAM3 engine
         .manage(Arc::new(AtomicBool::new(false))) // Download cancellation flag
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -424,7 +576,15 @@ pub fn run() {
             download_onnx_model,
             load_onnx_model,
             generate_onnx_response,
-            is_onnx_model_downloaded
+            is_onnx_model_downloaded,
+            // SAM3 commands
+            sam3_load,
+            sam3_unload,
+            sam3_is_loaded,
+            sam3_encode_image,
+            sam3_segment,
+            sam3_is_model_downloaded,
+            sam3_download_model
         ])
         .setup(|app| {
             // Create menu

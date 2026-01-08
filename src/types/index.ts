@@ -106,3 +106,6 @@ export interface OnnxModel {
   estimatedSizes: { [key: string]: number };  // Size per quantization
   description?: string;
 }
+
+// Re-export SAM3 types
+export * from './sam3';

@@ -1,9 +1,11 @@
 import React from 'react';
-import type { MediaItem } from '../types';
+import type { MediaItem, Sam3Point, Sam3Box, Sam3SegmentResult, Sam3Prompts } from '../types';
 import type { NormalizedSelection } from '../types/selection';
 import { DropZone } from './DropZone';
 import { Toolbar, type ToolType } from './Toolbar';
 import { SelectionOverlay } from './SelectionOverlay';
+import { Sam3Overlay } from './Sam3Overlay';
+import { Sam3Controls } from './Sam3Controls';
 import AudioViewer from './AudioViewer';
 import './ImageViewer.css';
 
@@ -12,9 +14,54 @@ interface ImageViewerProps {
   onMediaDrop: (files: File[]) => void;
   onLoadImage?: () => void;
   onImageCrop?: (croppedImageUrl: string) => void;
+  // SAM3 toolbar props
+  sam3Enabled?: boolean;
+  sam3Loading?: boolean;
+  sam3ModelDownloaded?: boolean;
+  onSam3Toggle?: () => void;
+  onSam3Download?: () => void;
+  // SAM3 overlay props
+  sam3Encoding?: boolean;
+  sam3Segmenting?: boolean;
+  sam3SegmentResult?: Sam3SegmentResult | null;
+  sam3SelectedMaskIndex?: number;
+  sam3OverlayOpacity?: number;
+  sam3OverlayColor?: string;
+  sam3Prompts?: Sam3Prompts;
+  onSam3AddPoint?: (point: Sam3Point) => void;
+  onSam3SetBox?: (box: Sam3Box | null) => void;
+  onSam3ClearPrompts?: () => void;
+  onSam3MaskIndexChange?: (index: number) => void;
+  onSam3OpacityChange?: (opacity: number) => void;
+  onSam3ExportMask?: () => void;
+  onSam3CropToMask?: () => void;
 }
 
-export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop, onLoadImage, onImageCrop }) => {
+export const ImageViewer: React.FC<ImageViewerProps> = ({
+  mediaItem,
+  onMediaDrop,
+  onLoadImage,
+  onImageCrop,
+  sam3Enabled,
+  sam3Loading,
+  sam3ModelDownloaded,
+  onSam3Toggle,
+  onSam3Download,
+  sam3Encoding,
+  sam3Segmenting,
+  sam3SegmentResult,
+  sam3SelectedMaskIndex = 0,
+  sam3OverlayOpacity = 50,
+  sam3OverlayColor = '#00ff00',
+  sam3Prompts,
+  onSam3AddPoint,
+  onSam3SetBox,
+  onSam3ClearPrompts,
+  onSam3MaskIndexChange,
+  onSam3OpacityChange,
+  onSam3ExportMask,
+  onSam3CropToMask,
+}) => {
   const [activeTool, setActiveTool] = React.useState<ToolType | undefined>(undefined);
   const [selection, setSelection] = React.useState<NormalizedSelection | null>(null);
   const imageRef = React.useRef<HTMLImageElement>(null);
@@ -100,7 +147,16 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop
   return (
     <div className="bw-image-viewer">
       {mediaItem.type === 'image' && (
-        <Toolbar activeTool={activeTool} hasSelection={!!selection} onToolSelect={handleToolSelect} />
+        <Toolbar
+          activeTool={activeTool}
+          hasSelection={!!selection}
+          onToolSelect={handleToolSelect}
+          sam3Enabled={sam3Enabled}
+          sam3Loading={sam3Loading}
+          sam3ModelDownloaded={sam3ModelDownloaded}
+          onSam3Toggle={onSam3Toggle}
+          onSam3Download={onSam3Download}
+        />
       )}
       <div className="bw-image-viewer-content">
         <div className="bw-image-container">
@@ -118,10 +174,45 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ mediaItem, onMediaDrop
                 isActive={activeTool === 'select'}
                 onSelectionChange={handleSelectionChange}
               />
+              {sam3Enabled && sam3Prompts && onSam3AddPoint && onSam3SetBox && onSam3ClearPrompts && (
+                <Sam3Overlay
+                  imageElement={imageRef.current}
+                  imageWidth={mediaItem.dimensions?.width || 0}
+                  imageHeight={mediaItem.dimensions?.height || 0}
+                  isEnabled={sam3Enabled}
+                  isEncoding={sam3Encoding || false}
+                  isSegmenting={sam3Segmenting || false}
+                  segmentResult={sam3SegmentResult || null}
+                  selectedMaskIndex={sam3SelectedMaskIndex}
+                  overlayOpacity={sam3OverlayOpacity}
+                  overlayColor={sam3OverlayColor}
+                  prompts={sam3Prompts}
+                  onAddPoint={onSam3AddPoint}
+                  onSetBox={onSam3SetBox}
+                  onClearPrompts={onSam3ClearPrompts}
+                />
+              )}
             </div>
           ) : mediaItem.type === 'audio' ? (
             <AudioViewer url={mediaItem.url} filename={mediaItem.filename} />
           ) : null}
+          {/* SAM3 Controls Panel */}
+          {sam3Enabled && onSam3MaskIndexChange && onSam3OpacityChange && onSam3ClearPrompts && onSam3ExportMask && onSam3CropToMask && (
+            <Sam3Controls
+              isEnabled={sam3Enabled}
+              isLoading={sam3Loading || false}
+              isEncoding={sam3Encoding || false}
+              isSegmenting={sam3Segmenting || false}
+              segmentResult={sam3SegmentResult || null}
+              selectedMaskIndex={sam3SelectedMaskIndex}
+              overlayOpacity={sam3OverlayOpacity}
+              onMaskIndexChange={onSam3MaskIndexChange}
+              onOpacityChange={onSam3OpacityChange}
+              onClearPrompts={onSam3ClearPrompts}
+              onExportMask={onSam3ExportMask}
+              onCropToMask={onSam3CropToMask}
+            />
+          )}
         </div>
         {mediaItem.type === 'image' && (
           <div className="bw-image-info">
