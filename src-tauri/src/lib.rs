@@ -400,6 +400,70 @@ async fn is_onnx_model_downloaded(model_id: String) -> Result<bool, String> {
         .map_err(|e| e.to_string())
 }
 
+// Save image to file
+#[tauri::command]
+async fn save_image(
+    image_data: Vec<u8>,
+    width: u32,
+    height: u32,
+    file_path: String,
+    format: String,
+) -> Result<(), String> {
+    use image::{ImageBuffer, Rgb, codecs::jpeg::JpegEncoder, codecs::bmp::BmpEncoder, ColorType};
+    use std::fs::File;
+    use std::io::BufWriter;
+
+    println!("Saving image to: {} (format: {})", file_path, format);
+    println!("Image dimensions: {}x{}, data length: {}", width, height, image_data.len());
+
+    // Validate data length (should be width * height * 3 for RGB)
+    let expected_len = (width * height * 3) as usize;
+    if image_data.len() != expected_len {
+        return Err(format!(
+            "Invalid image data length: expected {} bytes for {}x{} RGB image, got {}",
+            expected_len, width, height, image_data.len()
+        ));
+    }
+
+    // Create an RGB image buffer from the raw data
+    let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_raw(width, height, image_data.clone())
+        .ok_or_else(|| "Failed to create image buffer from raw data".to_string())?;
+
+    // Save based on format
+    let format_lower = format.to_lowercase();
+
+    tokio::task::spawn_blocking(move || {
+        let file = File::create(&file_path)
+            .map_err(|e| format!("Failed to create file: {}", e))?;
+        let mut writer = BufWriter::new(file);
+
+        match format_lower.as_str() {
+            "png" => {
+                img.save(&file_path)
+                    .map_err(|e| format!("Failed to save PNG: {}", e))?;
+            }
+            "jpg" | "jpeg" => {
+                let mut encoder = JpegEncoder::new_with_quality(&mut writer, 95);
+                encoder.encode_image(&img)
+                    .map_err(|e| format!("Failed to save JPEG: {}", e))?;
+            }
+            "bmp" => {
+                let mut encoder = BmpEncoder::new(&mut writer);
+                encoder.encode(&image_data, width, height, ColorType::Rgb8)
+                    .map_err(|e| format!("Failed to save BMP: {}", e))?;
+            }
+            _ => {
+                return Err(format!("Unsupported format: {}", format));
+            }
+        }
+
+        println!("Image saved successfully to: {}", file_path);
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -424,12 +488,14 @@ pub fn run() {
             download_onnx_model,
             load_onnx_model,
             generate_onnx_response,
-            is_onnx_model_downloaded
+            is_onnx_model_downloaded,
+            save_image
         ])
         .setup(|app| {
             // Create menu
             let open_item = MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?;
-            let file_menu = Submenu::with_items(app, "File", true, &[&open_item])?;
+            let save_item = MenuItem::with_id(app, "save", "Save As...", true, Some("CmdOrCtrl+Shift+S"))?;
+            let file_menu = Submenu::with_items(app, "File", true, &[&open_item, &save_item])?;
 
             let splash_window = app.get_webview_window("splash").unwrap();
             let main_window = app.get_webview_window("main").unwrap();
@@ -484,6 +550,25 @@ pub fn run() {
                         println!("Emit result: {:?}", result);
                     }
                 });
+            } else if event.id() == "save" {
+                println!("Save menu clicked");
+                let app_handle = app.clone();
+
+                // Show save dialog with format filters
+                app.dialog()
+                    .file()
+                    .add_filter("PNG Image", &["png"])
+                    .add_filter("JPEG Image", &["jpg", "jpeg"])
+                    .add_filter("BMP Image", &["bmp"])
+                    .save_file(move |file_path| {
+                        println!("Save file callback - file_path: {:?}", file_path);
+                        if let Some(path) = file_path {
+                            let path_str = path.to_string();
+                            println!("Emitting file-save event with path: {}", path_str);
+                            let result = app_handle.emit("file-save", path_str);
+                            println!("Emit result: {:?}", result);
+                        }
+                    });
             }
         })
         .run(tauri::generate_context!())
