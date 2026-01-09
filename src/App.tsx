@@ -335,6 +335,80 @@ function App() {
     };
   }, [currentMedia]);
 
+  // Listen for file-save events from the File menu
+  useEffect(() => {
+    console.log('Setting up file-save event listener');
+    const unlisten = listen<string>('file-save', async (event) => {
+      console.log('file-save event received:', event);
+
+      if (!currentMedia || currentMedia.type !== 'image') {
+        alert('No image to save. Please load an image first.');
+        return;
+      }
+
+      const filePath = event.payload;
+      console.log('Save file path:', filePath);
+
+      // Determine format from file extension
+      const extension = filePath.split('.').pop()?.toLowerCase() || 'png';
+      const format = extension === 'jpeg' ? 'jpg' : extension;
+      console.log('Save format:', format);
+
+      try {
+        // Load the current image and extract RGB data
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = currentMedia.url;
+        });
+
+        // Create canvas and get RGB data
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+          throw new Error('Failed to get canvas context');
+        }
+
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, img.width, img.height);
+
+        // Convert RGBA to RGB
+        const rgbData: number[] = [];
+        for (let i = 0; i < imageData.data.length; i += 4) {
+          rgbData.push(imageData.data[i]);     // R
+          rgbData.push(imageData.data[i + 1]); // G
+          rgbData.push(imageData.data[i + 2]); // B
+        }
+
+        console.log('Saving image:', img.width, 'x', img.height, 'to', filePath);
+
+        // Call the save_image command
+        await invoke('save_image', {
+          imageData: rgbData,
+          width: img.width,
+          height: img.height,
+          filePath: filePath,
+          format: format,
+        });
+
+        console.log('Image saved successfully');
+      } catch (error) {
+        console.error('Failed to save image:', error);
+        alert(`Failed to save image: ${error}`);
+      }
+    });
+
+    return () => {
+      unlisten.then(fn => fn());
+    };
+  }, [currentMedia]);
+
   // Load model when currentModel changes
   useEffect(() => {
     const loadModel = async () => {
