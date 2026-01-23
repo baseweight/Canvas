@@ -7,7 +7,8 @@ import { ImageViewer } from "./components/ImageViewer";
 import { ChatPanel } from "./components/ChatPanel";
 import { ModelSelectionModal } from "./components/ModelSelectionModal";
 import { DownloadModelDialog } from "./components/DownloadModelDialog";
-import type { MediaItem, Model, AvailableModel, OnnxModel, ChatMessage } from "./types";
+import type { MediaItem, Model, AvailableModel, OnnxModel, ChatMessage, Sam3State } from "./types";
+import { initialSam3State } from "./types";
 import "./App.css";
 
 // Bundled model that ships with Baseweight Canvas
@@ -137,6 +138,12 @@ function App() {
   const [downloadedModels, setDownloadedModels] = useState<Model[]>([]);
   const downloadCancelledRef = useRef(false);
 
+  // SAM3 state
+  const [sam3State, setSam3State] = useState<Sam3State>(initialSam3State);
+  const [isSam3DownloadDialogOpen, setIsSam3DownloadDialogOpen] = useState(false);
+  const [isSam3Downloading, setIsSam3Downloading] = useState(false);
+  const [sam3FileProgress, setSam3FileProgress] = useState<FileProgress>({});
+
   // Check if bundled model is downloaded on startup
   useEffect(() => {
     const checkBundledModel = async () => {
@@ -162,6 +169,11 @@ function App() {
     const unlisten = listen<DownloadProgress>('download-progress', (event) => {
       const progress = event.payload;
       setFileProgress(prev => ({
+        ...prev,
+        [progress.file]: progress
+      }));
+      // Also update SAM3 progress if SAM3 download dialog is open
+      setSam3FileProgress(prev => ({
         ...prev,
         [progress.file]: progress
       }));
@@ -250,6 +262,410 @@ function App() {
 
     loadDownloadedModels();
   }, []);
+
+  // Check if SAM3 model is downloaded on startup
+  useEffect(() => {
+    const checkSam3Model = async () => {
+      try {
+        const isDownloaded = await invoke<boolean>('sam3_is_model_downloaded');
+        setSam3State(prev => ({
+          ...prev,
+          isModelDownloaded: isDownloaded,
+        }));
+      } catch (error) {
+        console.error('Failed to check SAM3 model:', error);
+      }
+    };
+
+    checkSam3Model();
+  }, []);
+
+  // SAM3 handlers
+  const handleSam3Toggle = async () => {
+    if (sam3State.isLoading) return;
+
+    if (sam3State.isEnabled) {
+      // Disable SAM3 and unload model
+      try {
+        await invoke('sam3_unload');
+        setSam3State(prev => ({
+          ...prev,
+          isEnabled: false,
+          isModelLoaded: false,
+          prompts: { points: [], box: null },
+          segmentResult: null,
+        }));
+      } catch (error) {
+        console.error('Failed to unload SAM3:', error);
+      }
+    } else {
+      // Enable SAM3 and load model
+      setSam3State(prev => ({ ...prev, isLoading: true }));
+      try {
+        await invoke('sam3_load');
+        setSam3State(prev => ({
+          ...prev,
+          isEnabled: true,
+          isModelLoaded: true,
+          isLoading: false,
+        }));
+      } catch (error) {
+        console.error('Failed to load SAM3:', error);
+        setSam3State(prev => ({ ...prev, isLoading: false }));
+        alert(`Failed to load SAM3: ${error}`);
+      }
+    }
+  };
+
+  const handleSam3Download = () => {
+    // Show the download dialog instead of downloading immediately
+    setIsSam3DownloadDialogOpen(true);
+  };
+
+  const handleSam3DownloadConfirm = async () => {
+    if (sam3State.isLoading || isSam3Downloading) return;
+
+    setIsSam3Downloading(true);
+    setSam3FileProgress({});
+
+    try {
+      await invoke('sam3_download_model');
+      setSam3State(prev => ({
+        ...prev,
+        isModelDownloaded: true,
+      }));
+
+      setIsSam3DownloadDialogOpen(false);
+      setIsSam3Downloading(false);
+      setSam3FileProgress({});
+
+      // After download, automatically load the model
+      setSam3State(prev => ({ ...prev, isLoading: true }));
+      try {
+        await invoke('sam3_load');
+        setSam3State(prev => ({
+          ...prev,
+          isEnabled: true,
+          isModelLoaded: true,
+          isLoading: false,
+        }));
+      } catch (loadError) {
+        console.error('Failed to load SAM3 after download:', loadError);
+        setSam3State(prev => ({ ...prev, isLoading: false }));
+      }
+    } catch (error) {
+      console.error('Failed to download SAM3:', error);
+      setIsSam3Downloading(false);
+      setIsSam3DownloadDialogOpen(false);
+      alert(`Failed to download SAM3: ${error}`);
+    }
+  };
+
+  const handleSam3DownloadCancel = () => {
+    setIsSam3DownloadDialogOpen(false);
+    setIsSam3Downloading(false);
+    setSam3FileProgress({});
+  };
+
+  // SAM3 interaction handlers
+  const handleSam3AddPoint = (point: { x: number; y: number; label: 0 | 1 }) => {
+    setSam3State(prev => ({
+      ...prev,
+      prompts: {
+        ...prev.prompts,
+        points: [...prev.prompts.points, point],
+      },
+    }));
+  };
+
+  const handleSam3SetBox = (box: { x1: number; y1: number; x2: number; y2: number } | null) => {
+    setSam3State(prev => ({
+      ...prev,
+      prompts: {
+        ...prev.prompts,
+        box,
+      },
+    }));
+  };
+
+  const handleSam3ClearPrompts = () => {
+    setSam3State(prev => ({
+      ...prev,
+      prompts: { points: [], box: null },
+      segmentResult: null,
+    }));
+  };
+
+  const handleSam3MaskIndexChange = (index: number) => {
+    setSam3State(prev => ({
+      ...prev,
+      selectedMaskIndex: index,
+    }));
+  };
+
+  const handleSam3OpacityChange = (opacity: number) => {
+    setSam3State(prev => ({
+      ...prev,
+      overlayOpacity: opacity,
+    }));
+  };
+
+  const handleSam3ExportMask = async () => {
+    if (!sam3State.segmentResult) return;
+
+    try {
+      // Get the current mask as base64
+      const maskBase64 = sam3State.segmentResult.masks[sam3State.selectedMaskIndex];
+
+      // Convert base64 to blob
+      const byteCharacters = atob(maskBase64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'image/png' });
+
+      // Create download link
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `mask_${sam3State.selectedMaskIndex}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export mask:', error);
+      alert(`Failed to export mask: ${error}`);
+    }
+  };
+
+  const handleSam3CropToMask = async () => {
+    if (!sam3State.segmentResult || !currentMedia || currentMedia.type !== 'image') return;
+
+    try {
+      // Get the current mask as base64
+      const maskBase64 = sam3State.segmentResult.masks[sam3State.selectedMaskIndex];
+
+      // Load the mask image
+      const maskImg = new Image();
+      await new Promise((resolve, reject) => {
+        maskImg.onload = resolve;
+        maskImg.onerror = reject;
+        maskImg.src = `data:image/png;base64,${maskBase64}`;
+      });
+
+      // Load the original image
+      const originalImg = new Image();
+      originalImg.crossOrigin = 'anonymous';
+      await new Promise((resolve, reject) => {
+        originalImg.onload = resolve;
+        originalImg.onerror = reject;
+        originalImg.src = currentMedia.url;
+      });
+
+      // Create canvas and apply mask
+      const canvas = document.createElement('canvas');
+      canvas.width = originalImg.width;
+      canvas.height = originalImg.height;
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        throw new Error('Failed to get canvas context');
+      }
+
+      // Draw original image
+      ctx.drawImage(originalImg, 0, 0);
+
+      // Draw mask to another canvas to get data
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = maskImg.width;
+      maskCanvas.height = maskImg.height;
+      const maskCtx = maskCanvas.getContext('2d');
+      if (!maskCtx) throw new Error('Failed to get mask canvas context');
+      maskCtx.drawImage(maskImg, 0, 0);
+
+      // Scale mask to original image size if needed
+      const scaledMaskCanvas = document.createElement('canvas');
+      scaledMaskCanvas.width = originalImg.width;
+      scaledMaskCanvas.height = originalImg.height;
+      const scaledMaskCtx = scaledMaskCanvas.getContext('2d');
+      if (!scaledMaskCtx) throw new Error('Failed to get scaled mask context');
+      scaledMaskCtx.drawImage(maskCanvas, 0, 0, originalImg.width, originalImg.height);
+
+      const maskData = scaledMaskCtx.getImageData(0, 0, originalImg.width, originalImg.height);
+
+      // Apply mask as alpha channel
+      const imageData = ctx.getImageData(0, 0, originalImg.width, originalImg.height);
+      for (let i = 0; i < imageData.data.length; i += 4) {
+        // Use mask luminance as alpha (white = keep, black = transparent)
+        const maskIndex = i;
+        const maskValue = maskData.data[maskIndex]; // R channel of mask
+        imageData.data[i + 3] = maskValue; // Set alpha
+      }
+      ctx.putImageData(imageData, 0, 0);
+
+      // Find bounding box of non-transparent pixels
+      let minX = originalImg.width, minY = originalImg.height, maxX = 0, maxY = 0;
+      for (let y = 0; y < originalImg.height; y++) {
+        for (let x = 0; x < originalImg.width; x++) {
+          const i = (y * originalImg.width + x) * 4;
+          if (imageData.data[i + 3] > 0) {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+          }
+        }
+      }
+
+      // Crop to bounding box
+      const cropWidth = maxX - minX + 1;
+      const cropHeight = maxY - minY + 1;
+      const croppedCanvas = document.createElement('canvas');
+      croppedCanvas.width = cropWidth;
+      croppedCanvas.height = cropHeight;
+      const croppedCtx = croppedCanvas.getContext('2d');
+      if (!croppedCtx) throw new Error('Failed to get cropped canvas context');
+      croppedCtx.drawImage(canvas, minX, minY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+      // Convert to blob URL
+      const croppedUrl = croppedCanvas.toDataURL('image/png');
+
+      // Update media item with cropped image
+      const newMediaItem: MediaItem = {
+        id: crypto.randomUUID(),
+        type: 'image',
+        url: croppedUrl,
+        filename: `${currentMedia.filename.replace(/\.[^/.]+$/, '')}_cropped.png`,
+        size: 0,
+        dimensions: {
+          width: cropWidth,
+          height: cropHeight,
+        },
+        createdAt: new Date(),
+      };
+
+      setCurrentMedia(newMediaItem);
+
+      // Clear SAM3 prompts after crop
+      setSam3State(prev => ({
+        ...prev,
+        prompts: { points: [], box: null },
+        segmentResult: null,
+      }));
+
+    } catch (error) {
+      console.error('Failed to crop to mask:', error);
+      alert(`Failed to crop to mask: ${error}`);
+    }
+  };
+
+  // Encode image when SAM3 is enabled and image changes
+  useEffect(() => {
+    const encodeImage = async () => {
+      if (!sam3State.isEnabled || !sam3State.isModelLoaded || !currentMedia || currentMedia.type !== 'image') {
+        return;
+      }
+
+      setSam3State(prev => ({ ...prev, isEncoding: true }));
+
+      try {
+        // Get image data from the current media
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = currentMedia.url;
+        });
+
+        // Create canvas and get JPEG data
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+          throw new Error('Failed to get canvas context');
+        }
+
+        ctx.drawImage(img, 0, 0);
+
+        // Get image as JPEG bytes
+        const blob = await new Promise<Blob>((resolve) => {
+          canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.95);
+        });
+        const arrayBuffer = await blob.arrayBuffer();
+        const imageBytes = Array.from(new Uint8Array(arrayBuffer));
+
+        console.log('Encoding image for SAM3:', img.width, 'x', img.height);
+        await invoke('sam3_encode_image', { imageData: imageBytes });
+
+        setSam3State(prev => ({ ...prev, isEncoding: false }));
+        console.log('SAM3 image encoding complete');
+      } catch (error) {
+        console.error('Failed to encode image for SAM3:', error);
+        setSam3State(prev => ({ ...prev, isEncoding: false }));
+      }
+    };
+
+    encodeImage();
+  }, [sam3State.isEnabled, sam3State.isModelLoaded, currentMedia?.url]);
+
+  // Run segmentation when prompts change
+  useEffect(() => {
+    const segment = async () => {
+      if (!sam3State.isEnabled || !sam3State.isModelLoaded || sam3State.isEncoding) {
+        return;
+      }
+
+      // Only segment if we have prompts
+      if (sam3State.prompts.points.length === 0 && !sam3State.prompts.box) {
+        return;
+      }
+
+      setSam3State(prev => ({ ...prev, isSegmenting: true }));
+
+      try {
+        // Prepare points and labels
+        const points = sam3State.prompts.points.map(p => [p.x, p.y] as [number, number]);
+        const labels = sam3State.prompts.points.map(p => p.label as number);
+
+        // Prepare box if exists
+        const box = sam3State.prompts.box
+          ? [sam3State.prompts.box.x1, sam3State.prompts.box.y1, sam3State.prompts.box.x2, sam3State.prompts.box.y2] as [number, number, number, number]
+          : null;
+
+        console.log('Running SAM3 segmentation with', points.length, 'points, box:', !!box);
+
+        const result = await invoke<{
+          masks: string[];
+          iou_scores: number[];
+          object_score: number;
+          width: number;
+          height: number;
+        }>('sam3_segment', { points, labels, box });
+
+        setSam3State(prev => ({
+          ...prev,
+          isSegmenting: false,
+          segmentResult: result,
+        }));
+
+        console.log('SAM3 segmentation complete, IoU scores:', result.iou_scores);
+      } catch (error) {
+        console.error('Failed to run SAM3 segmentation:', error);
+        setSam3State(prev => ({ ...prev, isSegmenting: false }));
+      }
+    };
+
+    // Debounce segmentation to avoid rapid calls
+    const timeoutId = setTimeout(segment, 100);
+    return () => clearTimeout(timeoutId);
+  }, [sam3State.isEnabled, sam3State.isModelLoaded, sam3State.isEncoding, sam3State.prompts]);
 
   // Listen for file-opened events from the File menu
   useEffect(() => {
@@ -943,6 +1359,25 @@ function App() {
         onMediaDrop={handleMediaDrop}
         onLoadImage={handleLoadImage}
         onImageCrop={handleImageCrop}
+        sam3Enabled={sam3State.isEnabled}
+        sam3Loading={sam3State.isLoading}
+        sam3ModelDownloaded={sam3State.isModelDownloaded}
+        onSam3Toggle={handleSam3Toggle}
+        onSam3Download={handleSam3Download}
+        sam3Encoding={sam3State.isEncoding}
+        sam3Segmenting={sam3State.isSegmenting}
+        sam3SegmentResult={sam3State.segmentResult}
+        sam3SelectedMaskIndex={sam3State.selectedMaskIndex}
+        sam3OverlayOpacity={sam3State.overlayOpacity}
+        sam3OverlayColor={sam3State.overlayColor}
+        sam3Prompts={sam3State.prompts}
+        onSam3AddPoint={handleSam3AddPoint}
+        onSam3SetBox={handleSam3SetBox}
+        onSam3ClearPrompts={handleSam3ClearPrompts}
+        onSam3MaskIndexChange={handleSam3MaskIndexChange}
+        onSam3OpacityChange={handleSam3OpacityChange}
+        onSam3ExportMask={handleSam3ExportMask}
+        onSam3CropToMask={handleSam3CropToMask}
       />
       <ChatPanel
         currentModel={currentModel}
@@ -970,6 +1405,18 @@ function App() {
         onCancel={handleCancelDownload}
         fileProgress={fileProgress}
         isDownloading={isDownloading}
+      />
+      <DownloadModelDialog
+        isOpen={isSam3DownloadDialogOpen}
+        onDownload={handleSam3DownloadConfirm}
+        onCancel={handleSam3DownloadCancel}
+        fileProgress={sam3FileProgress}
+        isDownloading={isSam3Downloading}
+        modelName="SAM3 (Segment Anything 3)"
+        modelDescription="SAM3 enables interactive image segmentation. Click or draw boxes to select objects in your images."
+        downloadSize="~360 MB"
+        source="HuggingFace"
+        sourceRepo="onnx-community/sam3-tracker-ONNX"
       />
     </Layout>
   );

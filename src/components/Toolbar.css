@@ -61,3 +61,44 @@
   line-height: 1;
   user-select: none;
 }
+
+/* Toolbar divider */
+.bw-toolbar-divider {
+  height: 1px;
+  background-color: #4a4a4a;
+  margin: 4px 0;
+}
+
+/* SAM3 toggle button */
+.bw-sam3-toggle {
+  position: relative;
+}
+
+.bw-sam3-toggle.bw-tool-button--loading {
+  cursor: wait;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.bw-sam3-download-badge {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 10px;
+  line-height: 1;
+  background-color: #0078d4;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

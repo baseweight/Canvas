@@ -1,0 +1,217 @@
+/* SAM3 Controls Panel Styles */
+
+.bw-sam3-controls {
+  position: absolute;
+  top: 60px;
+  right: 12px;
+  width: 200px;
+  background-color: rgba(30, 30, 30, 0.95);
+  border: 1px solid #4a4a4a;
+  border-radius: 8px;
+  padding: 12px;
+  z-index: 20;
+  color: #e0e0e0;
+  font-size: 12px;
+}
+
+.bw-sam3-controls-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #4a4a4a;
+}
+
+.bw-sam3-controls-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.bw-sam3-status {
+  font-size: 11px;
+  color: #888;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.bw-sam3-section {
+  margin-bottom: 12px;
+}
+
+.bw-sam3-section-label {
+  display: block;
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Mask selector buttons */
+.bw-sam3-mask-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.bw-sam3-mask-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 4px;
+  background-color: #3a3a3a;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: #e0e0e0;
+}
+
+.bw-sam3-mask-btn:hover {
+  background-color: #454545;
+  border-color: #5a5a5a;
+}
+
+.bw-sam3-mask-btn--active {
+  background-color: #0078d4;
+  border-color: #1084d8;
+}
+
+.bw-sam3-mask-label {
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.bw-sam3-mask-iou {
+  font-size: 10px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.bw-sam3-mask-btn--active .bw-sam3-mask-iou {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* Object score bar */
+.bw-sam3-object-score {
+  position: relative;
+  height: 20px;
+  background-color: #3a3a3a;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.bw-sam3-object-score-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  transition: width 0.3s ease;
+}
+
+.bw-sam3-object-score-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* Opacity slider */
+.bw-sam3-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bw-sam3-slider {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #3a3a3a;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.bw-sam3-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #0078d4;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.bw-sam3-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: #0078d4;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+.bw-sam3-slider-value {
+  font-size: 11px;
+  color: #888;
+  min-width: 32px;
+  text-align: right;
+}
+
+/* Action buttons */
+.bw-sam3-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #4a4a4a;
+}
+
+.bw-sam3-action-btn {
+  flex: 1;
+  padding: 6px 8px;
+  background-color: #3a3a3a;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: #e0e0e0;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.bw-sam3-action-btn:hover:not(:disabled) {
+  background-color: #454545;
+  border-color: #5a5a5a;
+}
+
+.bw-sam3-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.bw-sam3-action-btn--primary {
+  background-color: #0078d4;
+  border-color: #1084d8;
+}
+
+.bw-sam3-action-btn--primary:hover:not(:disabled) {
+  background-color: #1084d8;
+  border-color: #2090dc;
+}
+
+/* Instructions */
+.bw-sam3-instructions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+  font-size: 10px;
+  color: #666;
+}
