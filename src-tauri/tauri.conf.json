@@ -46,11 +46,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": {
-      "libs/windows-x64/DirectML.dll": ".",
-      "libs/windows-x64/onnxruntime.dll": ".",
-      "libs/windows-x64/onnxruntime_providers_shared.dll": "."
-    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
