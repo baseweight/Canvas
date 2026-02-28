@@ -12,7 +12,7 @@ edition = "2021"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "baseweightcanvas_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["staticlib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -39,7 +39,7 @@ base64 = "0.22"
 
 # ONNX Runtime with platform-specific execution providers
 [target.'cfg(target_os = "windows")'.dependencies]
-ort = { version = "=2.0.0-rc.10", features = ["directml", "download-binaries"] }
+ort = { version = "=2.0.0-rc.10", features = ["directml", "load-dynamic"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ort = { version = "=2.0.0-rc.10", features = ["cuda", "download-binaries"] }

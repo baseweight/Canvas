@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "resources": {
+      "libs/windows-x64/DirectML.dll": ".",
+      "libs/windows-x64/onnxruntime.dll": ".",
+      "libs/windows-x64/onnxruntime_providers_shared.dll": "."
+    },
+    "windows": {
+      "wix": { "language": "en-US" },
+      "nsis": { "languages": ["English"] }
+    }
+  }
+}
